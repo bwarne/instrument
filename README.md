@@ -7,8 +7,12 @@ Claude to explain what went wrong.
 ## Features
 
 - **Prompt to code**: Claude writes runnable sclang into an editable editor. Follow-up prompts modify the current code.
+  Chords are annotated with their name, notes and role in the key.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
-- **Oscilloscope** of the master output, triggered on a rising zero crossing.
+- **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
+  (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.
+- **Audio health**: shows the output device, warns when the device's real sample rate drifts from scsynth's
+  (e.g. Bluetooth headphones dropping into call mode), and **⟳ Restart audio** reboots scsynth on the current device.
 - **MIDI tile**: a piano roll of anything sent to `~midi` (visualization only unless you set `MIDI_PORT`).
 - **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
 - **Cost and tokens** for each request, with a running session total.
@@ -23,13 +27,26 @@ Claude to explain what went wrong.
 
 ## Run
 
+As a desktop app (Electron):
+
 ```
 npm install
+npm run app        # opens the Instrument window
+npm run dist       # optional: builds dist/mac-arm64/Instrument.app (unsigned), drag it to /Applications
+```
+
+Or in a browser:
+
+```
 npm start          # then open http://127.0.0.1:3000
 ```
 
-Wait about 10 seconds for scsynth to boot. Click ⚙ and paste your API key. It is stored in your browser only
-and sent to the local server per request. Alternatively copy `.env.example` to `.env`.
+Wait about 10 seconds for scsynth to boot. Click ⚙ and paste your API key. It is stored on this machine only
+(in the app's or browser's local storage) and sent to the local server per request. Alternatively copy
+`.env.example` to `.env`; the packaged app also reads `~/Library/Application Support/Instrument/.env`.
+
+Run one at a time: the app and `npm start` both start scsynth and use the same UDP port. Closing the app's
+window quits it and shuts down sclang and scsynth.
 
 ## Configuration (`.env`)
 
@@ -39,6 +56,7 @@ and sent to the local server per request. Alternatively copy `.env.example` to `
 | `MODEL` | Claude model (default `claude-sonnet-5-5`) |
 | `PRICE_IN`, `PRICE_OUT` | $ per million tokens, for models not in the built-in price table |
 | `MIDI_PORT` | Part of a MIDI destination's name; also send `~midi` to that device |
+| `INSTRUMENT_OUT_DEVICE` | Audio output device name (e.g. `Scarlett Solo 4th Gen`); default is the system output |
 | `SCLANG`, `PORT` | Path to `sclang`, HTTP port (default 3000) |
 
 ## How it works
@@ -50,6 +68,13 @@ browser ──HTTP──▶ server.js ──stdin──▶ sclang ──▶ scsy
 ```
 
 `server.js` spawns `sclang`, calls the Claude API, and writes each run to a temp file wrapped in `fork { … }`
-so `s.sync` works anywhere. `scope.scd` and `midi.scd` run inside sclang at startup.
+so `s.sync` works anywhere. `scope.scd` and `midi.scd` run inside sclang at startup. The desktop app
+(`electron/main.js`) starts the same server on port 47800 and shows the page in its own window.
 
-The server listens on `127.0.0.1` only. It runs whatever sclang code you send it, so don't expose it to a network.
+The server runs whatever sclang code it is sent, and sclang can run shell commands, so it only accepts its
+own page: it listens on `127.0.0.1`, rejects requests whose `Host` or `Origin` isn't its own (so another
+website open in your browser can't call it, including via DNS rebinding), and only accepts JSON POSTs.
+Don't expose it to a network.
+
+scsynth boots with audio input disabled, since nothing records; this also avoids a boot failure with
+Bluetooth headphones whose mic and output run at different sample rates.

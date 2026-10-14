@@ -1,18 +1,46 @@
 {
   "name": "instrument",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "electron/main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node --env-file-if-exists=.env server.js"
+    "start": "node --env-file-if-exists=.env server.js",
+    "app": "electron .",
+    "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Describe a sound, Claude writes SuperCollider, run it live. A learning instrument.",
   "type": "module",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
     "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^41.7.1",
+    "electron-builder": "^26.15.3"
+  },
+  "productName": "Instrument",
+  "build": {
+    "appId": "net.jonowar.instrument",
+    "productName": "Instrument",
+    "files": [
+      "server.js",
+      "index.html",
+      "*.scd",
+      "electron/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "*.scd"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": "dir"
+    },
+    "directories": {
+      "output": "dist"
+    }
   }
 }
