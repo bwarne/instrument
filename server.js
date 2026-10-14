@@ -38,6 +38,46 @@ Do NOT rewrite the code. Explain what is wrong:
 - End with a line starting "Try:" giving the smallest change to make, described in words or a tiny inline snippet.
 Plain text only: no markdown headings, bullets or code fences. Keep it under 120 words.`;
 
+const GEAR_SYSTEM = `You advise someone learning synthesis on what physical instruments (hardware synths, drum machines, samplers, grooveboxes, effects pedals and units) could recreate a sound they made in SuperCollider.
+You get the SuperCollider code and the requests that produced it. Work out the sound's parts (e.g. the detuned saw pad, the sub bass, the 808-style kick, the shimmering reverb) and suggest 3-6 instruments:
+- Each one names which part(s) it covers and why it suits them, in terms a beginner can follow.
+- Prefer well-known, currently available gear; mix budget and higher-end choices, and include one instrument that covers most of the sound on its own when one exists.
+- Prices are estimates in USD from your knowledge: typical new street price and typical used price, as ranges. They may be out of date; don't claim precision.
+- "tip" says how to get this patch's sound on that instrument (oscillators, filter, envelope settings, effects).
+- "search" is the exact query to type into a music store's search, usually maker plus model.
+- "rigs" are 1-3 complete setups (e.g. budget, all-in-one, studio) listing instrument names from your list and their total estimated new price.`;
+
+const GEAR_SCHEMA = (() => {
+  const range = { type: 'object', additionalProperties: false, required: ['low', 'high'],
+    properties: { low: { type: 'integer' }, high: { type: 'integer' } } };
+  const str = { type: 'string' };
+  return {
+    type: 'object', additionalProperties: false, required: ['summary', 'items', 'rigs'],
+    properties: {
+      summary: { type: 'string', description: "One or two sentences naming the sound's parts." },
+      items: { type: 'array', items: {
+        type: 'object', additionalProperties: false,
+        required: ['name', 'maker', 'category', 'tier', 'covers', 'why', 'synthesis', 'voices', 'form', 'price_new_usd', 'price_used_usd', 'tip', 'search'],
+        properties: {
+          name: str, maker: str,
+          category: { type: 'string', enum: ['synth', 'drum machine', 'sampler', 'groovebox', 'effects pedal', 'effects unit', 'other'] },
+          tier: { type: 'string', enum: ['budget', 'mid', 'high-end'] },
+          covers: { type: 'string', description: 'Which part(s) of this sound it plays' },
+          why: str,
+          synthesis: { type: 'string', description: 'e.g. "analog subtractive", "FM", "sample playback"' },
+          voices: { type: 'string', description: 'e.g. "mono", "4-voice poly", "n/a"' },
+          form: { type: 'string', description: 'e.g. "37 mini keys", "desktop module", "pedal"' },
+          price_new_usd: range, price_used_usd: range, tip: str, search: str,
+        },
+      } },
+      rigs: { type: 'array', items: {
+        type: 'object', additionalProperties: false, required: ['name', 'items', 'total_new_usd', 'note'],
+        properties: { name: str, items: { type: 'array', items: str }, total_new_usd: { type: 'integer' }, note: str },
+      } },
+    },
+  };
+})();
+
 // --- Claude ---------------------------------------------------------------
 // $ per 1M tokens [input, output], from Anthropic's published list prices (Haiku 5.5's are for prompts
 // up to 100K tokens). Override with PRICE_IN / PRICE_OUT in .env, e.g. when MODEL isn't listed here.
@@ -72,18 +112,23 @@ const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const pickModel = (m) => (m && (m in PRICES || m === MODEL) ? m : MODEL);
 
 // `content` is a single user message, or a full messages array for a conversation.
-async function ask(apiKey, system, content, maxTokens, { model, effort } = {}) {
+// `format` is a JSON schema the reply must follow (structured output).
+async function ask(apiKey, system, content, maxTokens, { model, effort, format } = {}) {
   model = pickModel(model);
   const key = apiKey || process.env.ANTHROPIC_API_KEY;
   if (!key || key.endsWith('...')) throw new Error('No API key: click ⚙ and paste your Anthropic API key');
   const client = new Anthropic({ apiKey: key });
   const messages = Array.isArray(content) ? content : [{ role: 'user', content }];
+  const output_config = {
+    ...(EFFORTS.has(effort) && { effort }),
+    ...(format && { format: { type: 'json_schema', schema: format } }),
+  };
   try {
     // Stream and collect: large max_tokens values can exceed the SDK's limit for non-streaming requests.
     const res = await client.messages
       .stream({
         model, max_tokens: maxTokens, system, messages,
-        ...(EFFORTS.has(effort) && { output_config: { effort } }),
+        ...(Object.keys(output_config).length && { output_config }),
       })
       .finalMessage();
     return {
@@ -258,6 +303,17 @@ export async function start({
     return { analysis: text.trim(), usage };
   }
 
+  // Gear that could play this sound: the code plus the prompts behind it, answered as GEAR_SCHEMA JSON.
+  async function gear(apiKey, { code, prompts, model, effort } = {}) {
+    if (!code?.trim()) throw new Error('Nothing in the editor to find gear for');
+    const asked = (Array.isArray(prompts) ? prompts : []).filter((p) => typeof p === 'string').slice(-20);
+    const content = (asked.length ? `Requests that produced it:\n${asked.map((p) => '- ' + p).join('\n')}\n\n` : '')
+      + `SuperCollider code:\n${code}`;
+    const { text, truncated, usage } = await ask(apiKey, GEAR_SYSTEM, content, 8000, { model, effort, format: GEAR_SCHEMA });
+    if (truncated) throw new Error('The gear list was cut off; try again');
+    return { gear: JSON.parse(text), usage };
+  }
+
   // --- HTTP + WS ---
   // /run executes arbitrary sclang, which can run shell commands. Only this page may call it:
   // - Host must be loopback, which defeats DNS rebinding (evil.com resolving to 127.0.0.1).
@@ -294,6 +350,9 @@ export async function start({
       }
       if (req.method === 'POST' && req.url === '/analyze') {
         return json(res, 200, await analyze(req.headers['x-api-key'], await readBody(req)));
+      }
+      if (req.method === 'POST' && req.url === '/gear') {
+        return json(res, 200, await gear(req.headers['x-api-key'], await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/run') {
         await runCode((await readBody(req)).code);

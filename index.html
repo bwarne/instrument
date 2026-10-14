@@ -49,7 +49,7 @@
   input { flex:1; min-width:10em; }
   textarea { width:100%; height:100%; resize:none; tab-size:2; }
   /* prompt = natural language: proportional sans, roomier */
-  #prompt { flex:1; min-width:10em; height:auto; font:16px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+  #prompt { flex:1; min-width:18em; height:auto; font:16px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
             letter-spacing:.005em; padding:10px 12px; }
   #prompt::placeholder { color:var(--dim); font-style:italic; }
   /* code = sclang: monospace, tighter, slightly cooler tint so it reads as "output" */
@@ -99,6 +99,55 @@
   #usage { color:var(--dim); font-size:12px; padding-left:2px; font-variant-numeric:tabular-nums;
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   #history { width:min(760px,94vw); }
+  #gear { width:min(1100px,96vw); }
+  #gear .head { display:flex; gap:10px; align-items:baseline; }
+  #gear .head .hint { flex:1; }
+  #gear .head button { padding:3px 10px; font-size:12px; }
+  #gearBody { max-height:72vh; overflow:auto; margin-top:10px; font:14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+  #gearBody .pending { color:var(--dim); font-style:italic; padding:30px 0; text-align:center; }
+  /* thinking: a pulsing brain with music notes swirling around it on spiralling orbits */
+  .think { position:relative; width:240px; height:220px; margin:20px auto 6px; }
+  .think svg { position:absolute; left:50%; top:50%; width:110px; margin:-44px 0 0 -55px; overflow:visible;
+               animation:brainPulse 2.4s ease-in-out infinite; }
+  .think svg path { fill:none; stroke:var(--accent); stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+  .think svg .lobe { fill:#7fd1; }
+  .think svg .fold { stroke-width:1.6; opacity:.75; }
+  @keyframes brainPulse { 0%,100% { transform:scale(1); filter:drop-shadow(0 0 2px #7fd4); }
+                          50% { transform:scale(1.05); filter:drop-shadow(0 0 12px #7fd9); } }
+  .think .note { position:absolute; left:50%; top:50%; width:1em; height:1em; margin:-.5em; line-height:1em; text-align:center;
+                 font-style:normal; color:var(--c, var(--accent)); font-size:var(--s, 20px);
+                 animation:swirl var(--d, 5s) linear infinite; animation-delay:var(--delay, 0s); animation-direction:var(--dir, normal); }
+  @keyframes swirl {
+    0%   { transform:rotate(0deg)   translateX(var(--r1, 95px)) rotate(0deg);    opacity:0; }
+    15%  { opacity:1; }
+    50%  { transform:rotate(180deg) translateX(var(--r2, 65px)) rotate(-180deg); opacity:.9; }
+    85%  { opacity:1; }
+    100% { transform:rotate(360deg) translateX(var(--r1, 95px)) rotate(-360deg); opacity:0; }
+  }
+  @media (prefers-reduced-motion: reduce) { .think svg, .think .note { animation-duration:20s; } }
+  #gearBody .summary { color:#eed; margin:0 0 12px; }
+  #gearBody .rigs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  #gearBody .rig { background:#0d1415; border:1px solid #1f2c2e; border-radius:6px; padding:8px 10px; flex:1; min-width:220px; }
+  #gearBody .rig b { color:var(--accent); }
+  #gearBody .rig .total { float:right; font-variant-numeric:tabular-nums; color:var(--fg); }
+  #gearBody .rig div { color:var(--dim); font-size:12px; margin-top:4px; }
+  #gearBody .cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(300px, 1fr)); gap:10px; }
+  #gearBody .card { background:#151515; border:1px solid #2c2c2c; border-radius:6px; padding:12px; display:flex; flex-direction:column; gap:6px; }
+  #gearBody .card h3 { margin:0; font-size:16px; }
+  #gearBody .card h3 small { color:var(--dim); font-weight:normal; font-size:12px; margin-left:6px; }
+  #gearBody .chips { display:flex; gap:4px; flex-wrap:wrap; }
+  #gearBody .chip { font-size:11px; padding:1px 7px; border-radius:9px; background:#262626; color:#bbb; }
+  #gearBody .chip.budget { background:#173a2c; color:#8fd9b6; }
+  #gearBody .chip.mid { background:#3a3517; color:#e0cf7a; }
+  #gearBody .chip.high-end { background:#3a1f2a; color:#e39ab8; }
+  #gearBody .covers { color:var(--accent); font-size:13px; }
+  #gearBody .why, #gearBody .tip { color:#ccc; font-size:13px; }
+  #gearBody .tip { color:#aab; } #gearBody .tip b { color:#ccd; font-weight:600; }
+  #gearBody table { border-collapse:collapse; font-size:12px; width:100%; }
+  #gearBody td { padding:2px 0; vertical-align:top; } #gearBody td:first-child { color:var(--dim); width:6.5em; }
+  #gearBody td.price { font-variant-numeric:tabular-nums; color:var(--fg); }
+  #gearBody .links { margin-top:auto; display:flex; gap:12px; font-size:13px; }
+  #gearBody .links a { color:var(--accent); text-decoration:none; } #gearBody .links a:hover { text-decoration:underline; }
   #history .head { display:flex; gap:10px; align-items:baseline; }
   #history .head .hint { flex:1; }
   #turns { list-style:none; margin:10px 0 0; padding:0; max-height:70vh; overflow:auto; }
@@ -121,12 +170,13 @@
 <main>
 <div class="top">
   <div class="row">
-    <textarea id="prompt" rows="3" placeholder="describe a sound, or how to change it… (Enter to send, Shift+Enter for a new line)" autofocus></textarea>
+    <textarea id="prompt" rows="3" placeholder="describe a sound, or how to change it…" title="Enter to send, Shift+Enter for a new line" autofocus></textarea>
     <button id="gen" class="go">Generate</button>
     <button id="run">Run ⌘↵</button>
     <button id="stop">Stop ⌘.</button>
     <button id="newChat" title="Start fresh: clears the editor and the conversation (save first with ♡ to keep them)">＋ New</button>
     <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
+    <button id="gearBtn" title="What real instruments could play this sound, with estimated prices">🎛 Gear</button>
     <button id="cog" title="Settings">⚙</button>
     <span id="status"></span>
   </div>
@@ -135,6 +185,14 @@
     <div id="usage"></div>
   </div>
 </div>
+  <dialog id="gear">
+    <form method="dialog">
+      <div class="head"><b>Gear for this sound</b><span class="hint" id="gearHint"></span>
+        <button type="button" id="gearRefresh" title="Ask again for the code in the editor">↻ Refresh</button><button value="close">Close</button></div>
+      <div id="gearBody"></div>
+      <p class="hint">Prices are Claude's estimates in USD and may be out of date; the store links search current listings (Sweetwater new, Reverb mostly used).</p>
+    </form>
+  </dialog>
   <dialog id="history">
     <form method="dialog">
       <div class="head"><b>Conversation</b><span class="hint" id="historyHint"></span><button value="close">Close</button></div>
@@ -473,6 +531,99 @@ addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); openFind(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'g' && !$('find').hidden) { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
 });
+
+// --- 🎛 Gear: real instruments that could play this sound ------------------------
+// Claude reads the code and the prompts behind it and answers in a fixed JSON shape (see GEAR_SCHEMA
+// in server.js). Prices are its estimates; links are store searches built here, never URLs Claude
+// wrote, so they can't point at pages that don't exist. The last answer is kept per code version.
+const gearCache = {
+  load: () => { try { return JSON.parse(localStorage.getItem('gear-last') || 'null'); } catch { return null; } },
+  save: (v) => { try { localStorage.setItem('gear-last', JSON.stringify(v)); } catch {} },
+};
+const usd = (n) => '$' + Math.round(n).toLocaleString();
+const range = (r) => (r && r.high > 0 ? (r.low === r.high ? usd(r.low) : `${usd(r.low)}–${usd(r.high)}`) : '—');
+function renderGear(g) {
+  const q = (t) => encodeURIComponent(t);
+  $('gearBody').innerHTML = `
+    <p class="summary">${esc(g.summary)}</p>
+    <div class="rigs">${g.rigs.map((r) => `
+      <div class="rig"><b>${esc(r.name)}</b><span class="total">≈ ${usd(r.total_new_usd)}</span>
+        <div>${esc(r.items.join(' + '))}</div><div>${esc(r.note)}</div></div>`).join('')}</div>
+    <div class="cards">${g.items.map((it) => `
+      <div class="card">
+        <h3>${esc(it.name)}<small>${esc(it.maker)}</small></h3>
+        <div class="chips"><span class="chip">${esc(it.category)}</span><span class="chip ${esc(it.tier)}">${esc(it.tier)}</span></div>
+        <div class="covers">Covers: ${esc(it.covers)}</div>
+        <div class="why">${esc(it.why)}</div>
+        <table>
+          <tr><td>Synthesis</td><td>${esc(it.synthesis)}</td></tr>
+          <tr><td>Voices</td><td>${esc(it.voices)}</td></tr>
+          <tr><td>Form</td><td>${esc(it.form)}</td></tr>
+          <tr><td>New</td><td class="price">${range(it.price_new_usd)}</td></tr>
+          <tr><td>Used</td><td class="price">${range(it.price_used_usd)}</td></tr>
+        </table>
+        <div class="tip"><b>To get this sound:</b> ${esc(it.tip)}</div>
+        <div class="links">
+          <a href="https://www.sweetwater.com/store/search?s=${q(it.search)}" target="_blank" rel="noopener">Sweetwater ↗</a>
+          <a href="https://reverb.com/marketplace?query=${q(it.search)}" target="_blank" rel="noopener">Reverb ↗</a>
+        </div>
+      </div>`).join('')}</div>`;
+}
+// The "thinking" animation: a line-drawn brain (side view) and notes on spiralling orbits. Each note
+// gets its own speed, direction, radii, size and colour; negative delays spread them around the circle.
+const THINK_BRAIN = `<svg viewBox="0 0 100 80">
+  <path class="lobe" d="M20,55 C8,55 5,40 14,34 C10,22 22,14 32,18 C36,8 52,6 58,14 C66,6 82,10 84,22 C95,26 96,42 88,48 C92,58 82,66 72,62 C68,70 54,70 50,63 C44,68 32,66 30,58 C26,60 22,58 20,55 Z"/>
+  <path d="M60,66 C60,71 62,75 66,77"/>
+  <path class="fold" d="M48,13 C46,22 52,28 47,36 C43,44 50,50 47,60"/>
+  <path class="fold" d="M26,30 C31,26 36,32 41,28"/>
+  <path class="fold" d="M18,45 C24,41 29,47 36,43"/>
+  <path class="fold" d="M31,53 C34,49 38,52 41,49"/>
+  <path class="fold" d="M58,24 C63,29 68,22 74,27"/>
+  <path class="fold" d="M57,40 C63,36 68,44 76,38 C79,36 82,38 84,36"/>
+  <path class="fold" d="M62,54 C66,50 71,56 78,52"/>
+</svg>`;
+const THINK_NOTES = [
+  ['♪', '22px', '4.2s', '0s',    '96px', '62px', '#7fd',    'normal'],
+  ['♫', '26px', '5.6s', '-1.4s', '104px', '70px', '#c6fff0', 'normal'],
+  ['♩', '18px', '3.8s', '-2.2s', '84px', '58px', '#5fd9bb', 'reverse'],
+  ['♬', '24px', '6.4s', '-3.1s', '108px', '66px', '#9ff0da', 'normal'],
+  ['♪', '16px', '4.8s', '-0.7s', '78px', '56px', '#c6fff0', 'reverse'],
+  ['♫', '20px', '7.2s', '-4.5s', '100px', '74px', '#7fd',    'reverse'],
+  ['♩', '15px', '5.2s', '-3.8s', '90px', '60px', '#5fd9bb', 'normal'],
+].map(([g, s, d, delay, r1, r2, c, dir]) =>
+  `<i class="note" style="--s:${s};--d:${d};--delay:${delay};--r1:${r1};--r2:${r2};--c:${c};--dir:${dir}">${g}</i>`).join('');
+let gearBusy = false;
+async function askGear() {
+  const code = $('code').value;
+  if (!code.trim()) { $('gearBody').innerHTML = '<div class="pending">Generate or write some code first; the gear suggestions are for the sound in the editor.</div>'; return; }
+  if (gearBusy) return;
+  gearBusy = true; $('gearRefresh').disabled = true;
+  $('gearHint').textContent = '';
+  $('gearBody').innerHTML = `<div class="think" aria-hidden="true">${THINK_BRAIN}${THINK_NOTES}</div>
+    <div class="pending" style="padding-top:0">Listening to the code and thinking about gear…</div>`;
+  try {
+    const t0 = performance.now();
+    const { gear, usage } = await post('/gear', { code, prompts: turns.map((t) => t.prompt), ...speed() });
+    showUsage('gear', usage, performance.now() - t0);
+    gearCache.save({ code, gear, at: Date.now() });
+    renderGear(gear);
+    $('gearHint').textContent = 'for the code in the editor now';
+  } catch (e) {
+    $('gearBody').innerHTML = `<div class="pending">${esc(e.message)}</div>`;
+  } finally {
+    gearBusy = false; $('gearRefresh').disabled = false;
+  }
+}
+$('gearBtn').onclick = () => {
+  $('gear').showModal();
+  if (gearBusy) return;
+  const last = gearCache.load();
+  if (last && last.code === $('code').value) { // same sound: no need to ask (and pay) again
+    renderGear(last.gear);
+    $('gearHint').textContent = `from ${new Date(last.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+  } else askGear();
+};
+$('gearRefresh').onclick = askGear;
 
 const logEl = $('log');
 function log(t) {

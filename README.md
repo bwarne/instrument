@@ -18,6 +18,8 @@ Claude to explain what went wrong.
   (e.g. Bluetooth headphones dropping into call mode), and **⟳ Restart audio** reboots scsynth on the current device.
 - **MIDI tile**: a piano roll of anything sent to `~midi` (visualization only unless you set `MIDI_PORT`).
 - **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
+- **🎛 Gear**: which real instruments (synths, drum machines, pedals) could play the current sound, which part each
+  covers, how to dial it in, estimated new/used prices, suggested rigs, and Sweetwater/Reverb search links.
 - **Cost and tokens** for each request, with a running session total.
 - **Speed settings** in ⚙: effort (low by default, for quick replies) and model (Haiku 5.5 for speed, Opus 5.5 for depth).
 - **♡ Saved**: save the whole session (code and conversation) under a short name; loading it carries on with
