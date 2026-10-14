@@ -4,6 +4,9 @@ A live-"coding" instrument for learning SuperCollider. Describe a sound in plain
 sclang code, and you run it on a real local SuperCollider server. Edit the code, run it, break it, and ask
 Claude to explain what went wrong.
 
+**Download** (Apple silicon Mac, always the latest release):
+https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm64.dmg
+
 ## Features
 
 - **Prompt to code, as a conversation**: Claude writes runnable sclang into an editable editor, and each
@@ -44,7 +47,7 @@ As a desktop app (Electron):
 npm install
 npm run app        # opens the app window
 npm run dist       # optional: builds dist/mac-arm64/AnInstrument.app, drag it to /Applications
-npm run release    # signed + notarized dist/AnInstrument-*.dmg and .zip for other Macs
+npm run release    # signed + notarized dist/AnInstrument-arm64.dmg and .zip for other Macs
 ```
 
 `dist` and `release` sign with the Developer ID certificate in your keychain, if there is one. `release` also
