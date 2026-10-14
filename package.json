@@ -6,7 +6,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --env-file-if-exists=.env server.js",
     "app": "electron .",
-    "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir"
+    "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir",
+    "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip"
   },
   "keywords": [],
   "author": "",
@@ -37,7 +38,11 @@
     ],
     "mac": {
       "category": "public.app-category.music",
-      "target": "dir"
+      "target": "dir",
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "directories": {
       "output": "dist"

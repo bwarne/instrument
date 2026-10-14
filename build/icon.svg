@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Instrument app icon: SuperCollider's concentric rings, flattened. Each ring is split on the diagonal
+       into a lit and a shaded half (SC's rings use gradients that alternate direction); the halves swap
+       on every ring. After editing, run build/make-icon.sh to regenerate icon.png. -->
+  <defs>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+    <!-- the half of the canvas below-right of the diagonal through the centre -->
+    <clipPath id="lower"><polygon points="1024,0 1024,1024 0,1024"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="#111"/>
+    <!-- rings, outermost first: [radius, top-left colour, bottom-right colour] -->
+    <circle cx="512" cy="512" r="330" fill="#0d2b29"/>
+    <circle cx="512" cy="512" r="330" fill="#7fd" clip-path="url(#lower)"/>
+    <circle cx="512" cy="512" r="268" fill="#c6fff0"/>
+    <circle cx="512" cy="512" r="268" fill="#174d48" clip-path="url(#lower)"/>
+    <circle cx="512" cy="512" r="206" fill="#174d48"/>
+    <circle cx="512" cy="512" r="206" fill="#5fd9bb" clip-path="url(#lower)"/>
+    <circle cx="512" cy="512" r="144" fill="#9ff0da"/>
+    <circle cx="512" cy="512" r="144" fill="#0d2b29" clip-path="url(#lower)"/>
+    <circle cx="512" cy="512" r="82" fill="#0d2b29"/>
+    <circle cx="512" cy="512" r="82" fill="#7fd" clip-path="url(#lower)"/>
+    <circle cx="512" cy="512" r="30" fill="#c6fff0"/>
+    <circle cx="512" cy="512" r="30" fill="#174d48" clip-path="url(#lower)"/>
+  </g>
+</svg>

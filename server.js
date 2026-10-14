@@ -25,7 +25,8 @@ Rules:
 - When the code plays chords (always when the user asks for chords, a progression or harmony), annotate each chord with a // comment giving its name, its notes and its role in the key, e.g. // Am7: A C E G (ii in G major), next to where it is defined. For a progression, also add a one-line comment above it naming the key and the progression in Roman numerals.
 - Whenever notes are written as numbers in an array, put a // comment on the same line naming each note in order, so the numbers can be read as music. MIDI note numbers (\\midinote, .midicps): absolute names with octave, where 60 = C4, e.g. Pseq([60, 63, 67, 70]) // C4 Eb4 G4 Bb4. Scale degrees (\\degree with \\scale, \\root, \\octave): the notes they produce in that key, e.g. Pseq([0, 2, 4]) // C E G (degrees 1 3 5 of C major). Semitone offsets added to a root: the notes for that root, e.g. [0, 4, 7] // C E G on root C. Spell sharps or flats to suit the key, and use "rest" for \\rest or Rest().
 - Keep output safe: end every signal chain with a limiter or modest amp (<= 0.3) and never produce DC or runaway feedback.
-- If the user asks to modify the current code, return the full updated code.`;
+- This is a conversation about one piece of code that you and the user refine together. Every reply is the complete current code (never a fragment or diff), because it replaces the editor. Keep what earlier turns built unless the user asks to change it.
+- The user may edit the code between turns. When a message includes the current code, that is the latest version: build on it, including their edits.`;
 
 const ANALYZE_SYSTEM = `You help someone learning SuperCollider understand why their code failed.
 You get the sclang code that was run (line numbers match sclang's) and the sclang output it produced.
@@ -44,35 +45,49 @@ const PRICES = {
   'claude-haiku-5-5': [0.1, 0.5], 'claude-haiku-4-5': [1, 5],
   'claude-fable-5-1': [10, 50], 'claude-fable-5': [10, 50],
 };
-function summarizeUsage(u) {
+function summarizeUsage(u, model) {
   const cacheWrite = u.cache_creation_input_tokens || 0; // billed at 1.25x input
   const cacheRead = u.cache_read_input_tokens || 0;      // billed at 0.1x input
   const input = (u.input_tokens || 0) + cacheWrite + cacheRead;
   const output = u.output_tokens || 0;
-  const [pin, pout] = process.env.PRICE_IN && process.env.PRICE_OUT
+  const [pin, pout] = process.env.PRICE_IN && process.env.PRICE_OUT && model === MODEL
     ? [Number(process.env.PRICE_IN), Number(process.env.PRICE_OUT)]
-    : PRICES[MODEL] || [];
+    : PRICES[model] || [];
   const cost = pin == null ? null
     : ((u.input_tokens || 0) * pin + cacheWrite * pin * 1.25 + cacheRead * pin * 0.1 + output * pout) / 1e6;
-  return { input, output, cost, model: MODEL };
+  return { input, output, cost, model };
 }
 
-const stripFences = (t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '').trim();
+// Conversation turns sent back to Claude; older ones are dropped to bound the cost of each request.
+const HISTORY_TURNS = 20;
+
+const stripFences =(t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '').trim();
 
 // Key comes from the page's settings (per request, never stored); .env is only a fallback.
-async function ask(apiKey, system, content, maxTokens) {
+// Speed settings from the page's ⚙ dialog. Effort trades depth of reasoning for speed: low answers
+// quickest, which suits short sound sketches. The model list is the PRICES table plus MODEL from .env.
+const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const pickModel = (m) => (m && (m in PRICES || m === MODEL) ? m : MODEL);
+
+// `content` is a single user message, or a full messages array for a conversation.
+async function ask(apiKey, system, content, maxTokens, { model, effort } = {}) {
+  model = pickModel(model);
   const key = apiKey || process.env.ANTHROPIC_API_KEY;
   if (!key || key.endsWith('...')) throw new Error('No API key: click ⚙ and paste your Anthropic API key');
   const client = new Anthropic({ apiKey: key });
+  const messages = Array.isArray(content) ? content : [{ role: 'user', content }];
   try {
     // Stream and collect: large max_tokens values can exceed the SDK's limit for non-streaming requests.
     const res = await client.messages
-      .stream({ model: MODEL, max_tokens: maxTokens, system, messages: [{ role: 'user', content }] })
+      .stream({
+        model, max_tokens: maxTokens, system, messages,
+        ...(EFFORTS.has(effort) && { output_config: { effort } }),
+      })
       .finalMessage();
     return {
       text: res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''),
       truncated: res.stop_reason === 'max_tokens', // hit the output cap mid-reply
-      usage: summarizeUsage(res.usage),
+      usage: summarizeUsage(res.usage, model),
     };
   } catch (e) {
     if (e.status === 401) {
@@ -207,17 +222,37 @@ export async function start({
     return sinceRun.slice(Math.max(0, i - 300), i + 4000).trim();
   }
 
-  async function generate(prompt, currentCode, apiKey) {
-    const content = currentCode ? `Current code:\n${currentCode}\n\nRequest: ${prompt}` : prompt;
-    const { text, truncated, usage } = await ask(apiKey, SYSTEM, content, 16000);
-    return { code: stripFences(text), truncated, usage };
+  // history: earlier turns, oldest first, as [{ user, code }]: the message that was sent and the code
+  // Claude returned. The page keeps it and sends it back each time; the server stores nothing.
+  async function generate(prompt, currentCode, history, apiKey, opts) {
+    const turns = (Array.isArray(history) ? history : [])
+      .filter((t) => typeof t?.user === 'string' && typeof t?.code === 'string')
+      .slice(-HISTORY_TURNS);
+    // Only include the editor's code when Claude hasn't seen it: the first turn, or after the user edited
+    // it (or restored or loaded another version) since Claude's last reply.
+    const last = turns.at(-1)?.code;
+    const user = currentCode?.trim() && currentCode.trim() !== last?.trim()
+      ? `Current code${last ? ' (I changed it since your last version)' : ''}:\n${currentCode}\n\nRequest: ${prompt}`
+      : prompt;
+    const messages = turns.flatMap((t) => [
+      { role: 'user', content: t.user },
+      { role: 'assistant', content: t.code },
+    ]);
+    // Cache everything up to the last reply, so each turn only pays full price for what's new.
+    if (messages.length) {
+      const m = messages.at(-1);
+      m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }];
+    }
+    messages.push({ role: 'user', content: user });
+    const { text, truncated, usage } = await ask(apiKey, SYSTEM, messages, 16000, opts);
+    return { code: stripFences(text), user, truncated, usage };
   }
 
-  async function analyze(apiKey) {
+  async function analyze(apiKey, { model } = {}) {
     const errors = errorContext();
     if (!errors) return { analysis: null };
     const content = `Code that was run:\n${lastRunCode}\n\nsclang output:\n${errors}`;
-    const { text, usage } = await ask(apiKey, ANALYZE_SYSTEM, content, 1000);
+    const { text, usage } = await ask(apiKey, ANALYZE_SYSTEM, content, 1000, { model, effort: 'low' }); // a short explanation
     return { analysis: text.trim(), usage };
   }
 
@@ -252,11 +287,11 @@ export async function start({
         return json(res, 415, { error: 'expected application/json' });
       }
       if (req.method === 'POST' && req.url === '/generate') {
-        const { prompt, code } = await readBody(req);
-        return json(res, 200, await generate(prompt, code, req.headers['x-api-key']));
+        const { prompt, code, history, model, effort } = await readBody(req);
+        return json(res, 200, await generate(prompt, code, history, req.headers['x-api-key'], { model, effort }));
       }
       if (req.method === 'POST' && req.url === '/analyze') {
-        return json(res, 200, await analyze(req.headers['x-api-key']));
+        return json(res, 200, await analyze(req.headers['x-api-key'], await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/run') {
         await runCode((await readBody(req)).code);

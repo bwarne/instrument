@@ -62,6 +62,10 @@
   dialog { background:var(--panel); color:var(--fg); border:1px solid #444; border-radius:6px; width:min(440px,90vw); }
   dialog::backdrop { background:#000a; }
   dialog input { width:100%; margin-top:6px; }
+  dialog .speed { margin-bottom:4px; }
+  dialog .speed label { flex:1; color:var(--dim); font-size:12px; }
+  dialog select { width:100%; margin-top:4px; background:var(--bg); color:var(--fg); border:1px solid #333;
+                  border-radius:4px; font:13px ui-monospace, Menlo, monospace; padding:5px; }
   #library { width:min(520px,92vw); }
   #library .save { display:flex; gap:8px; }
   #library ul { list-style:none; margin:12px 0 0; padding:0; max-height:50vh; overflow:auto; }
@@ -72,7 +76,24 @@
   #library .empty { color:var(--dim); padding:8px 0; }
   .hint { color:var(--dim); font-size:12px; }
   .top { display:flex; flex-direction:column; gap:4px; min-width:0; }
-  #usage { color:var(--dim); font-size:12px; padding-left:2px; font-variant-numeric:tabular-nums; }
+  .sub { display:flex; gap:8px; align-items:center; min-width:0; }
+  .sub button { padding:1px 8px; font-size:12px; color:var(--dim); }
+  #usage { color:var(--dim); font-size:12px; padding-left:2px; font-variant-numeric:tabular-nums;
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #history { width:min(760px,94vw); }
+  #history .head { display:flex; gap:10px; align-items:baseline; }
+  #history .head .hint { flex:1; }
+  #turns { list-style:none; margin:10px 0 0; padding:0; max-height:70vh; overflow:auto; }
+  #turns li { border-top:1px solid #2a2a2a; padding:10px 0; }
+  #turns .you { font:15px/1.45 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+                white-space:pre-wrap; color:var(--fg); }
+  #turns .meta { display:flex; gap:8px; align-items:center; margin-top:6px; color:var(--dim); font-size:12px; }
+  #turns .meta summary { cursor:pointer; }
+  #turns .meta button { padding:2px 8px; font-size:12px; }
+  #turns details { flex:1; }
+  #turns pre { margin:6px 0 0; padding:10px 12px; max-height:40vh; overflow:auto; background:#0d1415; color:#cde8e4;
+               border:1px solid #1f2c2e; border-radius:4px; font:12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
+  #turns .current { color:var(--accent); }
   #usage:empty { display:none; }
   #usage b { color:var(--fg); font-weight:500; }
   #status { color:var(--dim); align-self:center; min-width:6em; }
@@ -82,7 +103,7 @@
 <main>
 <div class="top">
   <div class="row">
-    <textarea id="prompt" rows="3" placeholder="describe a sound… (Enter to generate, Shift+Enter for a new line)" autofocus></textarea>
+    <textarea id="prompt" rows="3" placeholder="describe a sound, or how to change it… (Enter to send, Shift+Enter for a new line)" autofocus></textarea>
     <button id="gen" class="go">Generate</button>
     <button id="run">Run ⌘↵</button>
     <button id="stop">Stop ⌘.</button>
@@ -90,14 +111,42 @@
     <button id="cog" title="Settings">⚙</button>
     <span id="status"></span>
   </div>
-  <div id="usage"></div>
+  <div class="sub">
+    <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
+    <button id="newChat" hidden title="Start a new conversation. The editor keeps its code, and Claude starts from it with no history.">New</button>
+    <div id="usage"></div>
+  </div>
 </div>
+  <dialog id="history">
+    <form method="dialog">
+      <div class="head"><b>Conversation</b><span class="hint" id="historyHint"></span><button value="close">Close</button></div>
+      <ol id="turns"></ol>
+    </form>
+  </dialog>
   <dialog id="settings">
     <form method="dialog">
       <label>Anthropic API key<br>
         <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
       </label>
       <p class="hint">Stored in this browser only (localStorage) and sent to your local server with each request. Leave empty to use ANTHROPIC_API_KEY from .env.</p>
+      <div class="row speed">
+        <label>Effort<br>
+          <select id="effort">
+            <option value="low">low · fastest</option>
+            <option value="medium">medium</option>
+            <option value="high">high · most thorough</option>
+          </select>
+        </label>
+        <label>Model<br>
+          <select id="model">
+            <option value="">default (.env MODEL or Sonnet 5.5)</option>
+            <option value="claude-haiku-5-5">Haiku 5.5 · fastest, cheapest</option>
+            <option value="claude-sonnet-5-5">Sonnet 5.5</option>
+            <option value="claude-opus-5-5">Opus 5.5 · strongest, slowest</option>
+          </select>
+        </label>
+      </div>
+      <p class="hint">Lower effort means less thinking before writing, so replies come back sooner. Error explanations always use low effort.</p>
       <div class="row"><button value="save" class="go">Save</button><button value="clear">Clear</button><button value="cancel">Cancel</button></div>
     </form>
   </dialog>
@@ -145,6 +194,10 @@ const store = {
   get: () => { try { return localStorage.getItem('anthropic-key') || ''; } catch { return ''; } },
   set: (v) => { try { v ? localStorage.setItem('anthropic-key', v) : localStorage.removeItem('anthropic-key'); } catch {} },
 };
+// Speed settings from ⚙, sent with Claude requests. Effort defaults to low: quick sketches suit live play.
+const pref = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+const speed = () => ({ effort: pref('effort', 'low'), model: pref('model', '') || undefined });
 const post = async (path, body) => {
   const headers = { 'content-type':'application/json' };
   if (store.get()) headers['x-api-key'] = store.get();
@@ -168,18 +221,68 @@ function showUsage(label, u, ms) {
   $('usage').innerHTML = parts.join(' · ');
 }
 
+// --- conversation: every prompt and the code Claude returned, sent back with each request ---------
+// The editor shows only the latest code; 💬 shows the whole thing. Kept in localStorage so a reload
+// doesn't lose it. Each turn: { prompt (what you typed), user (the message actually sent, which may
+// include your edited code), code (Claude's reply), at }.
+const chat = {
+  load: () => { try { return JSON.parse(localStorage.getItem('conversation') || '[]'); } catch { return []; } },
+  save: (t) => { try { localStorage.setItem('conversation', JSON.stringify(t)); } catch {} },
+};
+let turns = chat.load();
+function renderChat() {
+  $('historyBtn').hidden = $('newChat').hidden = !turns.length;
+  $('historyBtn').textContent = `💬 ${turns.length} turn${turns.length === 1 ? '' : 's'}`;
+}
+// Sends the prompt plus the conversation so far; Claude's reply replaces the editor.
+async function converse(prompt, label, code = $('code').value) {
+  const t0 = performance.now();
+  const history = turns.map(({ user, code }) => ({ user, code }));
+  const res = await post('/generate', { prompt, code, history, ...speed() });
+  const model = res.usage?.model?.replace(/^claude-/, '').replace(/-(\d)-(\d)$/, ' $1.$2') ?? '';
+  showUsage(`${label} · ${model} ${speed().effort}`, res.usage, performance.now() - t0);
+  $('code').value = res.code;
+  turns.push({ prompt, user: res.user, code: res.code, at: Date.now() });
+  chat.save(turns); renderChat();
+  if (res.truncated) log('! Claude hit the output limit, so this code is incomplete. Ask for something shorter or split it into parts.\n');
+  return res;
+}
+
 const generate = guard(async () => {
   const prompt = $('prompt').value.trim();
   if (!prompt) return;
   status('thinking…');
-  const t0 = performance.now();
-  const { code, truncated, usage } = await post('/generate', { prompt, code: $('code').value });
-  showUsage('generate', usage, performance.now() - t0);
-  $('code').value = code;
+  const { truncated } = await converse(prompt, 'generate');
   status(truncated ? 'cut off!' : '');
-  if (truncated) log('! Claude hit the output limit, so this code is incomplete. Ask for something shorter or split it into parts.\n');
   $('prompt').select();
 });
+
+$('historyBtn').onclick = () => {
+  const current = $('code').value.trim();
+  $('historyHint').textContent = `Claude sees all ${turns.length} turns${turns.length > 20 ? ' (the last 20 are sent)' : ''}.`;
+  $('turns').innerHTML = turns.map((t, i) => `
+    <li>
+      <div class="you">${esc(t.prompt)}</div>
+      <div class="meta">
+        <span>${new Date(t.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+        <details><summary>code · ${t.code.split('\n').length} lines${t.code.trim() === current ? ' · <span class="current">in editor</span>' : ''}</summary>
+          <pre>${esc(t.code)}</pre></details>
+        <button type="button" data-restore="${i}" title="Put this version back in the editor. The conversation continues from it.">Restore</button>
+      </div>
+    </li>`).join('');
+  $('turns').onclick = (e) => {
+    const b = e.target.closest('button[data-restore]'); if (!b) return;
+    const t = turns[+b.dataset.restore];
+    $('code').value = t.code; status('restored — Run to hear it'); $('history').close();
+  };
+  $('history').showModal();
+  $('turns').scrollTop = $('turns').scrollHeight; // newest at the bottom, like a chat
+};
+$('newChat').onclick = () => {
+  if (!confirm(`Start a new conversation? The ${turns.length} earlier turns will be forgotten; the editor keeps its code.`)) return;
+  turns = []; chat.save(turns); renderChat(); status('new conversation'); $('prompt').focus();
+};
+renderChat();
 const run = guard(async () => {
   hideTile();
   watchForError = true;
@@ -189,10 +292,14 @@ const run = guard(async () => {
 });
 const stop = guard(async () => { midiAllOff(); await post('/stop', {}); status('stopped'); });
 
-$('cog').onclick = () => { $('key').value = store.get(); $('settings').showModal(); };
+$('cog').onclick = () => {
+  $('key').value = store.get();
+  $('effort').value = pref('effort', 'low'); $('model').value = pref('model', '');
+  $('settings').showModal();
+};
 $('settings').addEventListener('close', () => {
   const v = $('settings').returnValue;
-  if (v === 'save') store.set($('key').value.trim());
+  if (v === 'save') { store.set($('key').value.trim()); setPref('effort', $('effort').value); setPref('model', $('model').value); }
   if (v === 'clear') store.set('');
   $('key').value = '';
   if (!store.get()) status('no key set');
@@ -286,7 +393,7 @@ async function analyze() {
   lastAnalysis = ''; $('fixBtn').hidden = true;
   try {
     const t0 = performance.now();
-    const { analysis, usage } = await post('/analyze', {});
+    const { analysis, usage } = await post('/analyze', { model: speed().model });
     if (analysis) showUsage('analysis', usage, performance.now() - t0);
     showTile(analysis ?? 'No sclang errors since the last Run.', !analysis);
     if (analysis) { lastAnalysis = analysis; $('fixBtn').hidden = false; }
@@ -301,16 +408,11 @@ $('fixBtn').onclick = guard(async () => {
   const analysis = lastAnalysis;
   $('fixBtn').disabled = true; status('fixing…');
   try {
-    const t0 = performance.now();
-    const { code, truncated, usage } = await post('/generate', {
-      code: lastRunCode,
-      prompt: `This code failed to run. Here is an analysis of the error:\n\n${analysis}\n\nFix the code based on this analysis. Return the full corrected code.`,
-    });
-    showUsage('fix', usage, performance.now() - t0);
-    $('code').value = code;
+    const { truncated } = await converse(
+      `Fix: this code failed to run. Here is an analysis of the error:\n\n${analysis}\n\nFix the code based on this analysis. Return the full corrected code.`,
+      'fix', lastRunCode);
     hideTile();
     status(truncated ? 'cut off!' : 'fixed — review, then Run');
-    if (truncated) log('! Claude hit the output limit, so this code is incomplete. Ask for something shorter or split it into parts.\n');
   } finally {
     $('fixBtn').disabled = false;
   }

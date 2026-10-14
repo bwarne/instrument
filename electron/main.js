@@ -46,6 +46,8 @@ async function createWindow() {
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 app.whenReady().then(async () => {
+  // The packaged app gets its icon from the bundle; `npm run app` would otherwise show Electron's.
+  if (!app.isPackaged) app.dock?.setIcon(join(root, 'build', 'icon.png'));
   const { start } = await import('../server.js');
   try {
     server = await start({ port: PORT, dataDir: app.getPath('userData') });

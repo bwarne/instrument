@@ -6,7 +6,10 @@ Claude to explain what went wrong.
 
 ## Features
 
-- **Prompt to code**: Claude writes runnable sclang into an editable editor. Follow-up prompts modify the current code.
+- **Prompt to code, as a conversation**: Claude writes runnable sclang into an editable editor, and each
+  follow-up refines it. Claude sees the whole conversation (the last 20 turns, cached so follow-ups stay cheap)
+  while the editor shows only the latest code. Your own edits between turns are sent along as the current
+  version. **💬** shows the full history and can restore any earlier version; **New** starts over.
   Chords are annotated with their name, notes and role in the key.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
 - **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
@@ -16,6 +19,7 @@ Claude to explain what went wrong.
 - **MIDI tile**: a piano roll of anything sent to `~midi` (visualization only unless you set `MIDI_PORT`).
 - **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
 - **Cost and tokens** for each request, with a running session total.
+- **Speed settings** in ⚙: effort (low by default, for quick replies) and model (Haiku 5.5 for speed, Opus 5.5 for depth).
 - **♡ Saved**: keep code you like under a short name (browser localStorage).
 
 ## Requirements
@@ -32,8 +36,19 @@ As a desktop app (Electron):
 ```
 npm install
 npm run app        # opens the Instrument window
-npm run dist       # optional: builds dist/mac-arm64/Instrument.app (unsigned), drag it to /Applications
+npm run dist       # optional: builds dist/mac-arm64/Instrument.app, drag it to /Applications
+npm run release    # signed + notarized dist/Instrument-*.dmg and .zip for other Macs
 ```
+
+`dist` and `release` sign with the Developer ID certificate in your keychain, if there is one. `release` also
+notarizes, using a notarytool keychain profile named `instrument-notary` (or set `APPLE_KEYCHAIN_PROFILE`).
+Create the profile once with:
+
+```
+xcrun notarytool store-credentials instrument-notary --apple-id you@example.com --team-id YOURTEAMID
+```
+
+It asks for an app-specific password, which you can generate at account.apple.com → Sign-In and Security.
 
 Or in a browser:
 
