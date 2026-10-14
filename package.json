@@ -1,13 +1,14 @@
 {
   "name": "instrument",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "main": "electron/main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --env-file-if-exists=.env server.js",
     "app": "sh build/dev-name.sh && electron .",
     "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir",
-    "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip --publish never"
+    "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip --publish never",
+    "publish": "sh build/publish.sh"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +17,7 @@
   "type": "module",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
+    "electron-updater": "^6.8.9",
     "ws": "^8.22.0"
   },
   "devDependencies": {
@@ -54,6 +56,14 @@
     },
     "electronLanguages": [
       "en"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "jonowar",
+      "repo": "instrument"
+    },
+    "zip": {
+      "artifactName": "${productName}-${arch}-mac.${ext}"
+    }
   }
 }

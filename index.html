@@ -208,7 +208,43 @@
   .callcost { color:var(--dim); font-size:11px; margin-top:6px; font-variant-numeric:tabular-nums; }
   .callcost:empty { display:none; }
   .callcost b { color:#aaa; font-weight:500; }
-  #status { color:var(--dim); align-self:center; min-width:6em; }
+  #status { color:var(--dim); align-self:center; min-width:6em; display:inline-flex; align-items:center; gap:7px; }
+  /* status animations: one small icon per kind of status, see STATUS_ANIM */
+  .st { position:relative; display:inline-block; width:1.3em; height:1.3em; line-height:1.3em; text-align:center; font-size:15px; }
+  .st i { position:absolute; left:50%; top:50%; width:1em; height:1em; margin:-.5em; line-height:1em; font-style:normal;
+          font-size:11px; color:var(--accent); opacity:0; }
+  .st b { display:inline-block; font-weight:normal; }
+  .st-think b { animation:stPulse 1.4s ease-in-out infinite; }
+  .st-think i { animation:swirl 1.8s linear infinite; --r1:15px; --r2:11px; }
+  .st-think i:nth-of-type(2) { animation-delay:-.6s; color:#e0cf7a; } .st-think i:nth-of-type(3) { animation-delay:-1.2s; color:#e39ab8; }
+  .st-fix b { transform-origin:80% 80%; animation:stSwing .55s ease-in-out infinite alternate; }
+  .st-fixed b { transform-origin:80% 80%; animation:stSwing .3s ease-in-out 4 alternate; }
+  .st-play i { animation:stFloat 1.6s ease-out 2 both; }
+  .st-play i:nth-of-type(2) { animation-delay:.35s; left:20%; color:#e0cf7a; } .st-play i:nth-of-type(3) { animation-delay:.7s; left:80%; color:#e39ab8; }
+  .st-stop b { animation:stDrop .5s ease-out both; }
+  .st-audio b { animation:stPulse .9s ease-in-out infinite; }
+  .st-audio i { animation:stWave 1.2s ease-out infinite; left:95%; } .st-audio i:nth-of-type(2) { animation-delay:.4s; }
+  .st-saved b { animation:stBeat .7s ease-in-out 3; }
+  .st-loaded b, .st-key b { animation:stBounce .5s ease-out 2; }
+  .st-key b { animation-name:stWiggle; }
+  .st-new b { animation:stTwinkle .8s ease-in-out 3; }
+  .st-rewind b { animation:stRewind .6s ease-out 2; }
+  .st-cut b { animation:stSnip .25s ease-in-out 6 alternate; }
+  .st-wait b { animation:stFlip 1.6s ease-in-out infinite; }
+  .st-live b { animation:stPulse 1.2s ease-in-out infinite; }
+  @keyframes stPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.18); } }
+  @keyframes stSwing { from { transform:rotate(20deg); } to { transform:rotate(-35deg); } }
+  @keyframes stFloat { 0% { transform:translate(0,4px); opacity:0; } 25% { opacity:1; } 100% { transform:translate(3px,-16px) rotate(15deg); opacity:0; } }
+  @keyframes stDrop { from { transform:scale(1.6); opacity:0; } to { transform:scale(1); opacity:1; } }
+  @keyframes stWave { from { transform:translateX(0) scale(.6); opacity:.9; } to { transform:translateX(9px) scale(1.4); opacity:0; } }
+  @keyframes stBeat { 0%,100% { transform:scale(1); } 20% { transform:scale(1.3); } 40% { transform:scale(1); } 60% { transform:scale(1.2); } }
+  @keyframes stBounce { 0%,100% { transform:translateY(0); } 40% { transform:translateY(-5px); } }
+  @keyframes stWiggle { 0%,100% { transform:rotate(0); } 25% { transform:rotate(-18deg); } 75% { transform:rotate(18deg); } }
+  @keyframes stTwinkle { 0%,100% { transform:scale(1) rotate(0); opacity:1; } 50% { transform:scale(.7) rotate(25deg); opacity:.6; } }
+  @keyframes stRewind { 0% { transform:translateX(5px); opacity:.4; } 100% { transform:translateX(0); opacity:1; } }
+  @keyframes stSnip { from { transform:rotate(0); } to { transform:rotate(-25deg); } }
+  @keyframes stFlip { 0%,40% { transform:rotate(0); } 50%,90% { transform:rotate(180deg); } 100% { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .st b, .st i { animation:none !important; } }
 </style>
 </head>
 <body>
@@ -352,7 +388,26 @@
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
-const status = (t) => ($('status').textContent = t);
+// Each status gets a small animated icon, picked from its text: [pattern, kind, icon, floating notes].
+const STATUS_ANIM = [
+  [/^thinking/, 'think', '🧠', '♪♫♩'], [/^fixing/, 'fix', '🔨'], [/^fixed/, 'fixed', '🔨'],
+  [/^cut off/, 'cut', '✂️'], [/^sent|^live ↻/, 'play', '', '♪♫♩'], [/^stopped/, 'stop', '⏹'],
+  [/^restarting audio|^switching output/, 'audio', '🔊', '))'], [/^saved/, 'saved', '❤️'],
+  [/^loaded/, 'loaded', '📂'], [/^new conversation/, 'new', '✨'], [/^rewound/, 'rewind', '⏪'],
+  [/^no key/, 'key', '🔑'], [/^live: waiting/, 'wait', '⏳'], [/^live: edits/, 'live', '🔴'],
+];
+const status = (t) => {
+  const el = $('status');
+  const a = t && STATUS_ANIM.find(([re]) => re.test(t));
+  el.textContent = t;
+  if (!a) return;
+  const [, kind, icon, notes = ''] = a;
+  const span = document.createElement('span');
+  span.className = 'st st-' + kind;
+  span.setAttribute('aria-hidden', 'true');
+  span.innerHTML = `<b>${icon}</b>` + [...notes].map((n) => `<i>${n}</i>`).join('');
+  el.prepend(span);
+};
 // The page runs in the desktop app or in a browser (npm start); say where things are saved.
 if (/Electron/.test(navigator.userAgent)) document.querySelectorAll('.where').forEach((e) => (e.textContent = 'this app'));
 const store = {
@@ -435,12 +490,14 @@ async function openLedger() {
 $('ledgerBtn').onclick = guard(openLedger);
 
 // --- conversation: every prompt and the code Claude returned, sent back with each request ---------
-// The editor shows only the latest code; 💬 shows the whole thing. Kept in localStorage so a reload
-// doesn't lose it. Each turn: { prompt (what you typed), user (the message actually sent, which may
-// include your edited code), code (Claude's reply), at }.
+// The editor shows only the latest code; 💬 shows the whole thing. Kept in sessionStorage, so a reload
+// keeps it but each launch of the app starts a new conversation (♡ saves one to come back to).
+// Each turn: { prompt (what you typed), user (the message actually sent, which may include your
+// edited code), code (Claude's reply), at }.
+try { localStorage.removeItem('conversation'); } catch {} // where it used to be kept, across launches
 const chat = {
-  load: () => { try { return JSON.parse(localStorage.getItem('conversation') || '[]'); } catch { return []; } },
-  save: (t) => { try { localStorage.setItem('conversation', JSON.stringify(t)); } catch {} },
+  load: () => { try { return JSON.parse(sessionStorage.getItem('conversation') || '[]'); } catch { return []; } },
+  save: (t) => { try { sessionStorage.setItem('conversation', JSON.stringify(t)); } catch {} },
 };
 let turns = chat.load();
 function renderChat() {
@@ -688,6 +745,8 @@ $('code').addEventListener('input', renderMarks);
 for (const ev of ['keyup', 'click', 'select']) $('code').addEventListener(ev, renderGutter);
 new ResizeObserver(renderMarks).observe($('code')); // a new width changes how lines wrap
 renderMarks();
+// After a reload the conversation is still there, so show its latest code rather than an empty editor.
+if (turns.length && !$('code').value) $('code').value = turns.at(-1).code;
 
 addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); openFind(); }
@@ -857,10 +916,10 @@ function renderParts() {
   $('partsList').innerHTML = shown.map((p) => {
     const orphan = !inCode.has(partKey(p));
     const state = p.muted ? 'muted' : p.playing ? 'playing' : 'stopped';
-    const tip = orphan ? 'Not in the code any more: stops on the next run. Click to stop now.'
-      : p.muted ? 'Muted: stays off when the code re-runs. Click to unmute.'
-      : p.playing ? 'Playing. Click to mute.' : 'Stopped. Click to play.';
-    return `<button class="part ${state}${orphan ? ' orphan' : ''}" data-key="${esc(partKey(p))}" data-on="${!p.playing}" title="${esc(`${p.kind === 'pdef' ? 'Pdef' : 'Ndef'} \\${p.name} · ${tip}`)}"><span class="k">${p.kind === 'pdef' ? 'P' : 'N'}</span>${esc(p.name)}</button>`;
+    const tip = orphan ? 'Not in the code any more: stops on the next run. Click to silence it now.'
+      : p.muted ? 'Muted: keeps time silently, and stays muted when the code re-runs. Click to bring it back in.'
+      : p.playing ? 'Playing. Click to mute: it keeps its place in time, so it comes back in on the beat.' : 'Stopped. Click to play.';
+    return `<button class="part ${state}${orphan ? ' orphan' : ''}" data-key="${esc(partKey(p))}" data-on="${p.muted || !p.playing}" title="${esc(`${p.kind === 'pdef' ? 'Pdef' : 'Ndef'} \\${p.name} · ${tip}`)}"><span class="k">${p.kind === 'pdef' ? 'P' : 'N'}</span>${esc(p.name)}</button>`;
   }).join('');
 }
 $('partsList').onclick = async (e) => {
@@ -1074,6 +1133,8 @@ function updateAudioWarn() {
   if (restarting) msg = '';
   else if (rateOff >= 2) msg = `The output is running at ${(audio.actual / 1000).toFixed(1)} kHz but scsynth expects ${(audio.nominal / 1000).toFixed(1)} kHz, so sound will be distorted and out of tune. The output device probably changed mode (Bluetooth headphones switch to a low-quality call mode when an app uses their mic). Fix the device, then restart audio.`;
   else if (notRunning >= 5) msg = 'The audio server isn’t running (see the log for why). Check the output device, then restart audio.';
+  // scsynth booted on a device that was already in a low-rate mode, so the rates agree but music suffers
+  else if (audio.running && audio.nominal > 0 && audio.nominal < 44100) msg = `The output is running at only ${(audio.nominal / 1000).toFixed(audio.nominal % 1000 ? 1 : 0)} kHz (music needs 44.1 or 48), so sound will be grainy and muffled. Bluetooth headphones drop to this call-quality mode while an app is using their mic. Find that app with the orange mic dot in Control Center, or pick another mic in System Settings → Sound → Input, then restart audio.`;
   $('audioWarn').hidden = !msg;
   $('audioWarnText').textContent = msg;
 }

@@ -1,6 +1,7 @@
 // Desktop app: starts the same server as `npm start` (sclang, scsynth, Claude calls) inside Electron
 // and shows the page in its own window. Run with `npm run app`.
-import { app, BrowserWindow, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, MenuItem, dialog, shell } from 'electron';
+import updater from 'electron-updater';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +48,45 @@ async function createWindow() {
   await win.loadURL(ORIGIN);
 }
 
+// --- updates: GitHub Releases, via electron-updater ---
+// The packaged app checks at launch and every few hours, downloads a newer release in the background
+// and offers to restart into it (or installs it on the next quit). Releases need the .zip and
+// latest-mac.yml as well as the .dmg; `npm run publish` uploads them. Not in `npm run app`, which has
+// no release to compare against.
+const { autoUpdater } = updater;
+let manualCheck = false; // from the menu, so say so when there's nothing new or the check fails
+function setUpUpdates() {
+  autoUpdater.on('update-available', (info) => {
+    if (manualCheck) dialog.showMessageBox(win, { message: `Downloading AnInstrument ${info.version}`,
+      detail: 'You can keep playing. You\'ll be asked to restart when it\'s ready.' });
+    manualCheck = false;
+  });
+  autoUpdater.on('update-not-available', () => {
+    if (manualCheck) dialog.showMessageBox(win, { message: 'AnInstrument is up to date', detail: `Version ${app.getVersion()}` });
+    manualCheck = false;
+  });
+  autoUpdater.on('error', (e) => {
+    console.error('update check failed:', e.message);
+    if (manualCheck) dialog.showMessageBox(win, { type: 'warning', message: 'Couldn\'t check for updates', detail: e.message });
+    manualCheck = false;
+  });
+  autoUpdater.on('update-downloaded', async (info) => {
+    const { response } = await dialog.showMessageBox(win, {
+      message: `AnInstrument ${info.version} is ready to install`,
+      detail: 'Restart now to update (anything playing stops), or it installs the next time you quit.',
+      buttons: ['Restart Now', 'Later'], defaultId: 0, cancelId: 1,
+    });
+    if (response === 0) autoUpdater.quitAndInstall();
+  });
+  const check = () => autoUpdater.checkForUpdates().catch(() => {}); // failures arrive as 'error'
+  check();
+  setInterval(check, 6 * 60 * 60 * 1000);
+  // "Check for Updates…" under the app menu, after "About AnInstrument"
+  const menu = Menu.getApplicationMenu();
+  menu?.items[0]?.submenu?.insert(1, new MenuItem({ label: 'Check for Updates…', click: () => { manualCheck = true; check(); } }));
+  if (menu) Menu.setApplicationMenu(menu);
+}
+
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 app.whenReady().then(async () => {
@@ -64,6 +104,7 @@ app.whenReady().then(async () => {
     return;
   }
   await createWindow();
+  if (app.isPackaged) setUpUpdates();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 

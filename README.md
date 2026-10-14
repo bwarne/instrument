@@ -16,7 +16,8 @@ https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm6
   Chords are annotated with their name, notes and role in the key.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
 - **Live coding**: **● Live** re-runs the code a moment after you stop typing (once brackets balance). Each `Pdef`/`Ndef`
-  appears in the **parts strip** as a toggle (lit while playing; click to mute or unmute, and mutes survive re-runs).
+  appears in the **parts strip** as a toggle (lit while playing; click to mute or unmute, and mutes survive re-runs). A muted part keeps running
+  silently, so it comes back in on the beat.
   Deleting or commenting out a part stops it on the next run; **⌘;** comments or uncomments the selected lines.
 - **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
   (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.
@@ -31,7 +32,7 @@ https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm6
   all time. It's stored in `usage.jsonl` in the app's data folder.
 - **Speed settings** in ⚙: effort (low by default, for quick replies) and model (Haiku 5.5 for speed, Opus 5.5 for depth).
 - **♡ Saved**: save the whole session (code and conversation) under a short name; loading it carries on with
-  Claude seeing everything up to the save. Stored in localStorage.
+  Claude seeing everything up to the save. Stored in localStorage. Each launch starts a new conversation.
 
 ## Requirements
 
@@ -50,7 +51,12 @@ npm install
 npm run app        # opens the app window
 npm run dist       # optional: builds dist/mac-arm64/AnInstrument.app, drag it to /Applications
 npm run release    # signed + notarized dist/AnInstrument-arm64.dmg and .zip for other Macs
+npm run publish -- "notes"   # GitHub release with the dmg, plus the zip + latest-mac.yml for updates
 ```
+
+Installed copies check GitHub Releases at launch (and **AnInstrument → Check for Updates…**), download a newer
+version in the background and offer to restart into it. `publish` needs everything committed and pushed, and
+retries uploads that time out; the release stays a draft until every file is there.
 
 `dist` and `release` sign with the Developer ID certificate in your keychain, if there is one. `release` also
 notarizes, using a notarytool keychain profile named `instrument-notary` (or set `APPLE_KEYCHAIN_PROFILE`).
