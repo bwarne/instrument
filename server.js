@@ -44,6 +44,7 @@ You get the SuperCollider code and the requests that produced it. Work out the s
 - Prefer well-known, currently available gear; mix budget and higher-end choices, and include one instrument that covers most of the sound on its own when one exists.
 - Prices are estimates in USD from your knowledge: typical new street price and typical used price, as ranges. They may be out of date; don't claim precision.
 - "tip" says how to get this patch's sound on that instrument (oscillators, filter, envelope settings, effects).
+- "name" is the model name only, without the maker (name "minilogue xd", maker "Korg").
 - "search" is the exact query to type into a music store's search, usually maker plus model.
 - "rigs" are 1-3 complete setups (e.g. budget, all-in-one, studio) listing instrument names from your list and their total estimated new price.`;
 
@@ -143,6 +144,44 @@ async function ask(apiKey, system, content, maxTokens, { model, effort, format }
     }
     throw e;
   }
+}
+
+// --- requests to Claude that don't need sclang (exported for tests) ---------
+// history: earlier turns, oldest first, as [{ user, code }]: the message that was sent and the code
+// Claude returned. The page keeps it and sends it back each time; the server stores nothing.
+export async function generate(prompt, currentCode, history, apiKey, opts) {
+  const turns = (Array.isArray(history) ? history : [])
+    .filter((t) => typeof t?.user === 'string' && typeof t?.code === 'string')
+    .slice(-HISTORY_TURNS);
+  // Only include the editor's code when Claude hasn't seen it: the first turn, or after the user edited
+  // it (or restored or loaded another version) since Claude's last reply.
+  const last = turns.at(-1)?.code;
+  const user = currentCode?.trim() && currentCode.trim() !== last?.trim()
+    ? `Current code${last ? ' (I changed it since your last version)' : ''}:\n${currentCode}\n\nRequest: ${prompt}`
+    : prompt;
+  const messages = turns.flatMap((t) => [
+    { role: 'user', content: t.user },
+    { role: 'assistant', content: t.code },
+  ]);
+  // Cache everything up to the last reply, so each turn only pays full price for what's new.
+  if (messages.length) {
+    const m = messages.at(-1);
+    m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }];
+  }
+  messages.push({ role: 'user', content: user });
+  const { text, truncated, usage } = await ask(apiKey, SYSTEM, messages, 16000, opts);
+  return { code: stripFences(text), user, truncated, usage };
+}
+
+// Gear that could play this sound: the code plus the prompts behind it, answered as GEAR_SCHEMA JSON.
+export async function gear(apiKey, { code, prompts, model, effort } = {}) {
+  if (!code?.trim()) throw new Error('Nothing in the editor to find gear for');
+  const asked = (Array.isArray(prompts) ? prompts : []).filter((p) => typeof p === 'string').slice(-20);
+  const content = (asked.length ? `Requests that produced it:\n${asked.map((p) => '- ' + p).join('\n')}\n\n` : '')
+    + `SuperCollider code:\n${code}`;
+  const { text, truncated, usage } = await ask(apiKey, GEAR_SYSTEM, content, 8000, { model, effort, format: GEAR_SCHEMA });
+  if (truncated) throw new Error('The gear list was cut off; try again');
+  return { gear: JSON.parse(text), usage };
 }
 
 // --- server ---------------------------------------------------------------
@@ -269,49 +308,12 @@ export async function start({
     return sinceRun.slice(Math.max(0, i - 300), i + 4000).trim();
   }
 
-  // history: earlier turns, oldest first, as [{ user, code }]: the message that was sent and the code
-  // Claude returned. The page keeps it and sends it back each time; the server stores nothing.
-  async function generate(prompt, currentCode, history, apiKey, opts) {
-    const turns = (Array.isArray(history) ? history : [])
-      .filter((t) => typeof t?.user === 'string' && typeof t?.code === 'string')
-      .slice(-HISTORY_TURNS);
-    // Only include the editor's code when Claude hasn't seen it: the first turn, or after the user edited
-    // it (or restored or loaded another version) since Claude's last reply.
-    const last = turns.at(-1)?.code;
-    const user = currentCode?.trim() && currentCode.trim() !== last?.trim()
-      ? `Current code${last ? ' (I changed it since your last version)' : ''}:\n${currentCode}\n\nRequest: ${prompt}`
-      : prompt;
-    const messages = turns.flatMap((t) => [
-      { role: 'user', content: t.user },
-      { role: 'assistant', content: t.code },
-    ]);
-    // Cache everything up to the last reply, so each turn only pays full price for what's new.
-    if (messages.length) {
-      const m = messages.at(-1);
-      m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }];
-    }
-    messages.push({ role: 'user', content: user });
-    const { text, truncated, usage } = await ask(apiKey, SYSTEM, messages, 16000, opts);
-    return { code: stripFences(text), user, truncated, usage };
-  }
-
   async function analyze(apiKey, { model } = {}) {
     const errors = errorContext();
     if (!errors) return { analysis: null };
     const content = `Code that was run:\n${lastRunCode}\n\nsclang output:\n${errors}`;
     const { text, usage } = await ask(apiKey, ANALYZE_SYSTEM, content, 1000, { model, effort: 'low' }); // a short explanation
     return { analysis: text.trim(), usage };
-  }
-
-  // Gear that could play this sound: the code plus the prompts behind it, answered as GEAR_SCHEMA JSON.
-  async function gear(apiKey, { code, prompts, model, effort } = {}) {
-    if (!code?.trim()) throw new Error('Nothing in the editor to find gear for');
-    const asked = (Array.isArray(prompts) ? prompts : []).filter((p) => typeof p === 'string').slice(-20);
-    const content = (asked.length ? `Requests that produced it:\n${asked.map((p) => '- ' + p).join('\n')}\n\n` : '')
-      + `SuperCollider code:\n${code}`;
-    const { text, truncated, usage } = await ask(apiKey, GEAR_SYSTEM, content, 8000, { model, effort, format: GEAR_SCHEMA });
-    if (truncated) throw new Error('The gear list was cut off; try again');
-    return { gear: JSON.parse(text), usage };
   }
 
   // --- HTTP + WS ---

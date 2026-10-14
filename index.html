@@ -163,6 +163,9 @@
   #turns .current { color:var(--accent); }
   #usage:empty { display:none; }
   #usage b { color:var(--fg); font-weight:500; }
+  .callcost { color:var(--dim); font-size:11px; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .callcost:empty { display:none; }
+  .callcost b { color:#aaa; font-weight:500; }
   #status { color:var(--dim); align-self:center; min-width:6em; }
 </style>
 </head>
@@ -190,6 +193,7 @@
       <div class="head"><b>Gear for this sound</b><span class="hint" id="gearHint"></span>
         <button type="button" id="gearRefresh" title="Ask again for the code in the editor">↻ Refresh</button><button value="close">Close</button></div>
       <div id="gearBody"></div>
+      <div class="callcost" id="gearCost"></div>
       <p class="hint">Prices are Claude's estimates in USD and may be out of date; the store links search current listings (Sweetwater new, Reverb mostly used).</p>
     </form>
   </dialog>
@@ -271,6 +275,7 @@
       <button id="dismiss" title="Hide">✕</button>
     </header>
     <div id="errBody"></div>
+    <div class="callcost" id="errCost"></div>
   </section>
 </aside>
 <script>
@@ -299,14 +304,19 @@ const guard = (fn) => async () => { try { await fn(); } catch (e) { status(''); 
 // --- usage line under the prompt: tokens, cost, time, running total for this page load ---
 let sessionCost = 0, sessionKnown = true;
 const fmtCost = (c) => (c < 0.1 ? '$' + c.toFixed(4) : '$' + c.toFixed(2));
+// One call's tokens, cost and time. Every feature that calls Claude shows this under its own UI, so
+// the cost of each call is visible where it was made (see CLAUDE.md).
+function usageText(u, ms) {
+  const parts = [`<b>${u.input.toLocaleString()}</b> tokens sent`, `<b>${u.output.toLocaleString()}</b> received`];
+  parts.push(u.cost == null ? 'cost unknown for ' + u.model : `<b>${fmtCost(u.cost)}</b>`);
+  if (ms != null) parts.push((ms / 1000).toFixed(1) + 's');
+  return parts.join(' · ');
+}
+// Adds a call to the session total and shows it on the line under the prompt.
 function showUsage(label, u, ms) {
   if (!u) return;
   if (u.cost == null) sessionKnown = false; else sessionCost += u.cost;
-  const parts = [`${label}`, `<b>${u.input.toLocaleString()}</b> in`, `<b>${u.output.toLocaleString()}</b> out`];
-  parts.push(u.cost == null ? 'cost unknown for ' + u.model : `<b>${fmtCost(u.cost)}</b>`);
-  if (ms != null) parts.push((ms / 1000).toFixed(1) + 's');
-  parts.push(`session ${fmtCost(sessionCost)}${sessionKnown ? '' : '+'}`);
-  $('usage').innerHTML = parts.join(' · ');
+  $('usage').innerHTML = `${label} · ${usageText(u, ms)} · session ${fmtCost(sessionCost)}${sessionKnown ? '' : '+'}`;
 }
 
 // --- conversation: every prompt and the code Claude returned, sent back with each request ---------
@@ -542,6 +552,8 @@ const gearCache = {
 };
 const usd = (n) => '$' + Math.round(n).toLocaleString();
 const range = (r) => (r && r.high > 0 ? (r.low === r.high ? usd(r.low) : `${usd(r.low)}–${usd(r.high)}`) : '—');
+// "Korg minilogue xd" with maker "Korg" -> "minilogue xd", since the maker is shown beside it
+const modelName = (it) => (it.name.toLowerCase().startsWith(it.maker.toLowerCase() + ' ') ? it.name.slice(it.maker.length + 1) : it.name);
 function renderGear(g) {
   const q = (t) => encodeURIComponent(t);
   $('gearBody').innerHTML = `
@@ -551,7 +563,7 @@ function renderGear(g) {
         <div>${esc(r.items.join(' + '))}</div><div>${esc(r.note)}</div></div>`).join('')}</div>
     <div class="cards">${g.items.map((it) => `
       <div class="card">
-        <h3>${esc(it.name)}<small>${esc(it.maker)}</small></h3>
+        <h3>${esc(modelName(it))}<small>${esc(it.maker)}</small></h3>
         <div class="chips"><span class="chip">${esc(it.category)}</span><span class="chip ${esc(it.tier)}">${esc(it.tier)}</span></div>
         <div class="covers">Covers: ${esc(it.covers)}</div>
         <div class="why">${esc(it.why)}</div>
@@ -598,14 +610,16 @@ async function askGear() {
   if (!code.trim()) { $('gearBody').innerHTML = '<div class="pending">Generate or write some code first; the gear suggestions are for the sound in the editor.</div>'; return; }
   if (gearBusy) return;
   gearBusy = true; $('gearRefresh').disabled = true;
-  $('gearHint').textContent = '';
+  $('gearHint').textContent = ''; $('gearCost').innerHTML = '';
   $('gearBody').innerHTML = `<div class="think" aria-hidden="true">${THINK_BRAIN}${THINK_NOTES}</div>
     <div class="pending" style="padding-top:0">Listening to the code and thinking about gear…</div>`;
   try {
     const t0 = performance.now();
     const { gear, usage } = await post('/gear', { code, prompts: turns.map((t) => t.prompt), ...speed() });
-    showUsage('gear', usage, performance.now() - t0);
-    gearCache.save({ code, gear, at: Date.now() });
+    const ms = performance.now() - t0;
+    showUsage('gear', usage, ms);
+    gearCache.save({ code, gear, usage, ms, at: Date.now() });
+    $('gearCost').innerHTML = usageText(usage, ms);
     renderGear(gear);
     $('gearHint').textContent = 'for the code in the editor now';
   } catch (e) {
@@ -620,6 +634,7 @@ $('gearBtn').onclick = () => {
   const last = gearCache.load();
   if (last && last.code === $('code').value) { // same sound: no need to ask (and pay) again
     renderGear(last.gear);
+    $('gearCost').innerHTML = last.usage ? 'this answer cost ' + usageText(last.usage, last.ms) + ' · reopening is free' : '';
     $('gearHint').textContent = `from ${new Date(last.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
   } else askGear();
 };
@@ -643,6 +658,7 @@ let lastRunCode = '';   // the code that produced the error (the editor may have
 let lastAnalysis = '';  // Claude's explanation, once we have one
 const hideTile = () => { clearTimeout(errTimer); runIssue = null; lastAnalysis = ''; $('fixBtn').hidden = true; $('errTile').hidden = true; };
 function showTile(text, pending) {
+  if (pending) $('errCost').innerHTML = ''; // a new analysis is on its way
   $('errTile').hidden = false;
   $('errBody').textContent = text;
   $('errBody').classList.toggle('pending', !!pending);
@@ -671,7 +687,11 @@ async function analyze() {
   try {
     const t0 = performance.now();
     const { analysis, usage } = await post('/analyze', { model: speed().model });
-    if (analysis) showUsage('analysis', usage, performance.now() - t0);
+    if (analysis) {
+      const ms = performance.now() - t0;
+      showUsage('analysis', usage, ms);
+      $('errCost').innerHTML = usageText(usage, ms);
+    }
     showTile(analysis ?? 'No sclang errors or warnings since the last Run.', !analysis);
     if (analysis) { lastAnalysis = analysis; $('fixBtn').hidden = false; }
   } catch (e) {
