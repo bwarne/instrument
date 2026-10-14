@@ -169,6 +169,21 @@
                border:1px solid #1f2c2e; border-radius:4px; font:12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; }
   #turns .current { color:var(--accent); }
   #usage:empty { display:none; }
+  #ledger { width:min(900px,96vw); }
+  #ledger .head { display:flex; gap:10px; align-items:baseline; }
+  #ledger .head .hint { flex:1; }
+  #ledger .totals { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 4px; }
+  #ledger .total { background:#151515; border:1px solid #2c2c2c; border-radius:6px; padding:8px 12px; min-width:120px; }
+  #ledger .total b { display:block; font-size:18px; font-weight:500; color:var(--fg); font-variant-numeric:tabular-nums; }
+  #ledger .total span { color:var(--dim); font-size:12px; }
+  #ledgerKinds { color:var(--dim); font-size:12px; margin:6px 0 10px; }
+  #ledgerKinds b { color:#aaa; font-weight:500; }
+  #ledgerTable { max-height:55vh; overflow:auto; }
+  #ledgerTable table { border-collapse:collapse; width:100%; font-size:12px; font-variant-numeric:tabular-nums; }
+  #ledgerTable th { position:sticky; top:0; background:var(--panel); color:var(--dim); font-weight:normal; text-align:right; padding:4px 8px; }
+  #ledgerTable td { text-align:right; padding:3px 8px; border-top:1px solid #2a2a2a; white-space:nowrap; }
+  #ledgerTable th:nth-child(-n+3), #ledgerTable td:nth-child(-n+3) { text-align:left; }
+  #ledgerTable td:nth-child(7) { color:var(--fg); }
   #usage b { color:var(--fg); font-weight:500; }
   /* parts strip: one toggle per Pdef/Ndef */
   .parts { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
@@ -212,6 +227,7 @@
   </div>
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
+    <button id="ledgerBtn" title="Usage history: tokens and cost of every Claude request, kept across sessions">🧾 Usage</button>
     <div id="usage"></div>
   </div>
   <div class="parts">
@@ -226,6 +242,15 @@
       <div id="gearBody"></div>
       <div class="callcost" id="gearCost"></div>
       <p class="hint">Prices are Claude's estimates in USD and may be out of date; the store links search current listings (Sweetwater new, Reverb mostly used).</p>
+    </form>
+  </dialog>
+  <dialog id="ledger">
+    <form method="dialog">
+      <div class="head"><b>Usage history</b><span class="hint">every Claude request, newest first</span><button value="close">Close</button></div>
+      <div class="totals" id="ledgerTotals"></div>
+      <div id="ledgerKinds"></div>
+      <div id="ledgerTable"></div>
+      <p class="hint" id="ledgerFile"></p>
     </form>
   </dialog>
   <dialog id="history">
@@ -366,6 +391,49 @@ function showUsage(label, u, ms) {
   $('usage').innerHTML = `${label} · ${usageText(u, ms)} · session ${fmtCost(sessionCost)}${sessionKnown ? '' : '+'}`;
 }
 
+// --- usage history (🧾): every Claude request's tokens and cost, recorded by the server in usage.jsonl ---
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const shortModel = (m) => String(m ?? '').replace(/^claude-/, '').replace(/-(\d)-(\d)$/, ' $1.$2');
+// Total cost of some entries; '+' marks a total that leaves out calls with an unknown price.
+function sumCost(list) {
+  const known = list.filter((e) => e.cost != null);
+  return fmtCost(known.reduce((a, e) => a + e.cost, 0)) + (known.length < list.length ? '+' : '');
+}
+const LEDGER_ROWS = 500;
+async function openLedger() {
+  const r = await fetch('/usage');
+  const { entries, file } = await r.json();
+  const now = new Date();
+  const day = now.toDateString(), month = now.getFullYear() * 12 + now.getMonth();
+  const at = (e) => new Date(e.at);
+  const totals = [
+    ['today', entries.filter((e) => at(e).toDateString() === day)],
+    ['this month', entries.filter((e) => at(e).getFullYear() * 12 + at(e).getMonth() === month)],
+    ['all time', entries],
+  ];
+  $('ledgerTotals').innerHTML = totals.map(([name, list]) => `<div class="total"><b>${sumCost(list)}</b>`
+    + `<span>${name} · ${list.length} request${list.length === 1 ? '' : 's'}</span></div>`).join('');
+  const kinds = Object.groupBy(entries, (e) => e.kind);
+  $('ledgerKinds').innerHTML = Object.entries(kinds).map(([k, list]) => `${esc(k)} <b>${sumCost(list)}</b> (${list.length})`).join(' · ')
+    + (entries.length ? ` · <b>${entries.reduce((a, e) => a + e.input, 0).toLocaleString()}</b> tokens sent, `
+      + `<b>${entries.reduce((a, e) => a + e.output, 0).toLocaleString()}</b> received` : '');
+  const rows = entries.slice(-LEDGER_ROWS).reverse().map((e) => {
+    const d = at(e);
+    const when = (d.toDateString() === day ? '' : d.toLocaleDateString(undefined, { month:'short', day:'numeric' }) + ' ')
+      + d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+    return `<tr><td>${esc(when)}</td><td>${esc(e.kind)}</td><td>${esc(shortModel(e.model))}${e.effort ? ' ' + esc(e.effort) : ''}</td>`
+      + `<td>${e.input.toLocaleString()}</td><td>${(e.cacheRead || 0).toLocaleString()}</td><td>${e.output.toLocaleString()}</td>`
+      + `<td>${e.cost == null ? '?' : fmtCost(e.cost)}</td><td>${(e.ms / 1000).toFixed(1)}s</td></tr>`;
+  }).join('');
+  $('ledgerTable').innerHTML = entries.length
+    ? `<table><thead><tr><th>when</th><th>what</th><th>model</th><th>sent</th><th>cached</th><th>received</th><th>cost</th><th>time</th></tr></thead><tbody>${rows}</tbody></table>`
+    : '<p class="hint">No requests yet. Each Generate, Fix, error analysis and Gear request is added here.</p>';
+  $('ledgerFile').textContent = (entries.length > LEDGER_ROWS ? `Showing the latest ${LEDGER_ROWS}; totals count all ${entries.length}. ` : '')
+    + `"sent" includes "cached" tokens, which cost a tenth as much. Costs use list prices. Kept in ${file}.`;
+  $('ledger').showModal();
+}
+$('ledgerBtn').onclick = guard(openLedger);
+
 // --- conversation: every prompt and the code Claude returned, sent back with each request ---------
 // The editor shows only the latest code; 💬 shows the whole thing. Kept in localStorage so a reload
 // doesn't lose it. Each turn: { prompt (what you typed), user (the message actually sent, which may
@@ -383,9 +451,8 @@ function renderChat() {
 async function converse(prompt, label, code = $('code').value) {
   const t0 = performance.now();
   const history = turns.map(({ user, code }) => ({ user, code }));
-  const res = await post('/generate', { prompt, code, history, ...speed() });
-  const model = res.usage?.model?.replace(/^claude-/, '').replace(/-(\d)-(\d)$/, ' $1.$2') ?? '';
-  showUsage(`${label} · ${model} ${speed().effort}`, res.usage, performance.now() - t0);
+  const res = await post('/generate', { prompt, code, history, kind: label, ...speed() });
+  showUsage(`${label} · ${shortModel(res.usage?.model)} ${speed().effort}`, res.usage, performance.now() - t0);
   $('code').value = res.code;
   turns.push({ prompt, user: res.user, code: res.code, at: Date.now() });
   chat.save(turns); renderChat();
@@ -460,6 +527,7 @@ const stop = guard(async () => { midiAllOff(); await post('/stop', {}); status('
 $('cog').onclick = () => {
   $('key').value = store.get();
   $('effort').value = pref('effort', 'low'); $('model').value = pref('model', '');
+  $('settings').returnValue = ''; // Esc or a click outside closes without saving or clearing
   $('settings').showModal();
 };
 $('settings').addEventListener('close', () => {
@@ -470,6 +538,17 @@ $('settings').addEventListener('close', () => {
   if (!store.get()) status('no key set');
 });
 if (!store.get()) status('no key set');
+// A click on the backdrop (outside the dialog's box, so the event lands on the <dialog> itself) closes it,
+// like Close. Both press and release must be outside, so a text selection dragged out of a dialog doesn't.
+for (const d of document.querySelectorAll('dialog')) {
+  const outside = (e) => {
+    const r = d.getBoundingClientRect();
+    return e.target === d && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+  };
+  let downOutside = false;
+  d.addEventListener('mousedown', (e) => { downOutside = outside(e); });
+  d.addEventListener('click', (e) => { if (downOutside && outside(e)) d.close(); downOutside = false; });
+}
 $('gen').onclick = generate; $('run').onclick = run; $('stop').onclick = stop;
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); generate(); }
@@ -487,7 +566,6 @@ const lib = {
   load: () => { try { return JSON.parse(localStorage.getItem('saved-patches') || '[]'); } catch { return []; } },
   save: (list) => { try { localStorage.setItem('saved-patches', JSON.stringify(list)); return true; } catch { return false; } },
 };
-const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 // default name: first few words of the first prompt, since that's what you'll remember it by
 const suggestName = () => ((turns[0]?.prompt || $('prompt').value).trim().split(/\s+/).slice(0, 4).join(' ') || '').slice(0, 24);
 const nTurns = (n) => `${n} turn${n === 1 ? '' : 's'}`;

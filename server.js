@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, mkdir, access } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, mkdtemp, mkdir, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -110,8 +110,12 @@ function summarizeUsage(u, model) {
     : PRICES[model] || [];
   const cost = pin == null ? null
     : ((u.input_tokens || 0) * pin + cacheWrite * pin * 1.25 + cacheRead * pin * 0.1 + output * pout) / 1e6;
-  return { input, output, cost, model };
+  return { input, output, cost, model, cacheRead, cacheWrite };
 }
+
+// The usage history: start() points this at usage.jsonl in the data folder, and ask() adds a line for
+// every call that comes back, whatever feature made it. Calls made outside start() (tests) aren't recorded.
+let recordUsage = null;
 
 // Conversation turns sent back to Claude; older ones are dropped to bound the cost of each request.
 const HISTORY_TURNS = 20;
@@ -126,7 +130,8 @@ const pickModel = (m) => (m && (m in PRICES || m === MODEL) ? m : MODEL);
 
 // `content` is a single user message, or a full messages array for a conversation.
 // `format` is a JSON schema the reply must follow (structured output).
-async function ask(apiKey, system, content, maxTokens, { model, effort, format } = {}) {
+// `kind` names the feature for the usage history (generate, fix, analysis, gear).
+async function ask(apiKey, system, content, maxTokens, { model, effort, format, kind = 'other' } = {}) {
   model = pickModel(model);
   const key = apiKey || process.env.ANTHROPIC_API_KEY;
   if (!key || key.endsWith('...')) throw new Error('No API key: click ⚙ and paste your Anthropic API key');
@@ -136,6 +141,7 @@ async function ask(apiKey, system, content, maxTokens, { model, effort, format }
     ...(EFFORTS.has(effort) && { effort }),
     ...(format && { format: { type: 'json_schema', schema: format } }),
   };
+  const t0 = Date.now();
   try {
     // Stream and collect: large max_tokens values can exceed the SDK's limit for non-streaming requests.
     const res = await client.messages
@@ -144,10 +150,16 @@ async function ask(apiKey, system, content, maxTokens, { model, effort, format }
         ...(Object.keys(output_config).length && { output_config }),
       })
       .finalMessage();
+    const usage = summarizeUsage(res.usage, model);
+    recordUsage?.({
+      at: new Date().toISOString(), kind, model, effort: output_config.effort ?? null,
+      input: usage.input, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, output: usage.output,
+      cost: usage.cost, ms: Date.now() - t0,
+    });
     return {
       text: res.content.filter((b) => b.type === 'text').map((b) => b.text).join(''),
       truncated: res.stop_reason === 'max_tokens', // hit the output cap mid-reply
-      usage: summarizeUsage(res.usage, model),
+      usage,
     };
   } catch (e) {
     if (e.status === 401) {
@@ -181,7 +193,7 @@ export async function generate(prompt, currentCode, history, apiKey, opts) {
     m.content = [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }];
   }
   messages.push({ role: 'user', content: user });
-  const { text, truncated, usage } = await ask(apiKey, SYSTEM, messages, 16000, opts);
+  const { text, truncated, usage } = await ask(apiKey, SYSTEM, messages, 16000, { ...opts, kind: opts?.kind === 'fix' ? 'fix' : 'generate' });
   return { code: stripFences(text), user, truncated, usage };
 }
 
@@ -191,7 +203,7 @@ export async function gear(apiKey, { code, prompts, model, effort } = {}) {
   const asked = (Array.isArray(prompts) ? prompts : []).filter((p) => typeof p === 'string').slice(-20);
   const content = (asked.length ? `Requests that produced it:\n${asked.map((p) => '- ' + p).join('\n')}\n\n` : '')
     + `SuperCollider code:\n${code}`;
-  const { text, truncated, usage } = await ask(apiKey, GEAR_SYSTEM, content, 8000, { model, effort, format: GEAR_SCHEMA });
+  const { text, truncated, usage } = await ask(apiKey, GEAR_SYSTEM, content, 8000, { model, effort, format: GEAR_SCHEMA, kind: 'gear' });
   if (truncated) throw new Error('The gear list was cut off; try again');
   return { gear: JSON.parse(text), usage };
 }
@@ -199,8 +211,8 @@ export async function gear(apiKey, { code, prompts, model, effort } = {}) {
 // --- server ---------------------------------------------------------------
 // Starts sclang (which boots scsynth) and the HTTP/WebSocket server the page talks to.
 // Returns { port, stop }. Used by `node server.js` and by the Electron app (electron/main.js).
-// dataDir holds settings.json (the chosen output device). It matches the Electron app's userData folder,
-// so the app and `npm start` share the choice.
+// dataDir holds settings.json (the chosen output device) and usage.jsonl (every Claude call's tokens and
+// cost). It matches the Electron app's userData folder, so the app and `npm start` share them.
 export async function start({
   port = 3000,
   log = (d) => process.stdout.write(d),
@@ -213,6 +225,10 @@ export async function start({
     await mkdir(dataDir, { recursive: true });
     await writeFile(settingsFile, JSON.stringify(settings, null, 2));
   };
+  const usageFile = join(dataDir, 'usage.jsonl'); // one JSON object per line, oldest first
+  recordUsage = (entry) => mkdir(dataDir, { recursive: true })
+    .then(() => appendFile(usageFile, JSON.stringify(entry) + '\n'))
+    .catch((e) => log(`! couldn't record usage: ${e.message}\n`));
 
   const clients = new Set();
   const broadcast = (type, data) => {
@@ -361,7 +377,7 @@ export async function start({
     const errors = errorContext();
     if (!errors) return { analysis: null };
     const content = `Code that was run:\n${lastRunCode}\n\nsclang output:\n${errors}`;
-    const { text, usage } = await ask(apiKey, ANALYZE_SYSTEM, content, 1000, { model, effort: 'low' }); // a short explanation
+    const { text, usage } = await ask(apiKey, ANALYZE_SYSTEM, content, 1000, { model, effort: 'low', kind: 'analysis' }); // a short explanation
     return { analysis: text.trim(), usage };
   }
 
@@ -403,14 +419,20 @@ export async function start({
         return json(res, 200, { supercollider: !!sc });
       }
       if (req.method === 'POST' && req.url === '/generate') {
-        const { prompt, code, history, model, effort } = await readBody(req);
-        return json(res, 200, await generate(prompt, code, history, req.headers['x-api-key'], { model, effort }));
+        const { prompt, code, history, model, effort, kind } = await readBody(req);
+        return json(res, 200, await generate(prompt, code, history, req.headers['x-api-key'], { model, effort, kind }));
       }
       if (req.method === 'POST' && req.url === '/analyze') {
         return json(res, 200, await analyze(req.headers['x-api-key'], await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/gear') {
         return json(res, 200, await gear(req.headers['x-api-key'], await readBody(req)));
+      }
+      if (req.method === 'GET' && req.url === '/usage') { // the 🧾 usage history
+        let text = '';
+        try { text = await readFile(usageFile, 'utf8'); } catch {}
+        const entries = text.split('\n').flatMap((l) => { try { return l ? [JSON.parse(l)] : []; } catch { return []; } });
+        return json(res, 200, { entries, file: usageFile });
       }
       if (req.method === 'POST' && req.url === '/run') {
         const { code, keep } = await readBody(req);
@@ -472,6 +494,7 @@ export async function start({
   function stop() {
     if (stopped) return;
     stopped = true;
+    recordUsage = null;
     if (sc) try { process.kill(-sc.pid); } catch {} // the whole group: sh, cat, sclang and its scsynth
     udp.close();
     server.close();

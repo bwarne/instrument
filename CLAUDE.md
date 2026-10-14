@@ -10,6 +10,8 @@ local scsynth. See README.md for features, architecture and the security model.
   the call, with the call's tokens sent and received and its cost, using `usageText()` in index.html.
   It also goes into the session total via `showUsage()`. The server returns `usage` from
   `summarizeUsage()` for this, so new endpoints should return it too.
+- **Every Claude call is also recorded in the usage history** (usage.jsonl in the data folder, shown by
+  🧾 Usage). `ask()` does this itself, so route new calls through `ask()` and give them a `kind`.
 - Links shown to the user are built from data (e.g. store searches), never URLs written by the model.
 - Test page changes in a hidden Electron window with `fetch` stubbed; test Claude calls through the
   exported functions in server.js (`generate`, `gear`) with `node --env-file=.env`, since the running
