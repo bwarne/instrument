@@ -125,13 +125,13 @@
     <button id="gen" class="go">Generate</button>
     <button id="run">Run ⌘↵</button>
     <button id="stop">Stop ⌘.</button>
+    <button id="newChat" title="Start fresh: clears the editor and the conversation (save first with ♡ to keep them)">＋ New</button>
     <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
     <button id="cog" title="Settings">⚙</button>
     <span id="status"></span>
   </div>
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
-    <button id="newChat" hidden title="Start a new conversation. The editor keeps its code, and Claude starts from it with no history.">New</button>
     <div id="usage"></div>
   </div>
 </div>
@@ -261,7 +261,7 @@ const chat = {
 };
 let turns = chat.load();
 function renderChat() {
-  $('historyBtn').hidden = $('newChat').hidden = !turns.length;
+  $('historyBtn').hidden = !turns.length;
   $('historyBtn').textContent = `💬 ${turns.length} turn${turns.length === 1 ? '' : 's'}`;
 }
 // Sends the prompt plus the conversation so far; Claude's reply replaces the editor.
@@ -297,10 +297,18 @@ $('historyBtn').onclick = () => {
         <span>${new Date(t.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
         <details><summary>code · ${t.code.split('\n').length} lines${t.code.trim() === current ? ' · <span class="current">in editor</span>' : ''}</summary>
           <pre>${esc(t.code)}</pre></details>
+        <button type="button" data-copy="${i}" title="Copy this version's code to the clipboard">Copy</button>
         ${i < turns.length - 1 ? `<button type="button" data-rewind="${i}" title="Go back to this version. Claude's context goes back too: the later turns are dropped.">Rewind here</button>` : ''}
       </div>
     </li>`).join('');
-  $('turns').onclick = (e) => {
+  $('turns').onclick = async (e) => {
+    const c = e.target.closest('button[data-copy]');
+    if (c) {
+      try { await navigator.clipboard.writeText(turns[+c.dataset.copy].code); c.textContent = 'Copied ✓'; }
+      catch { c.textContent = 'Copy failed'; }
+      setTimeout(() => (c.textContent = 'Copy'), 1500);
+      return;
+    }
     const b = e.target.closest('button[data-rewind]'); if (!b) return;
     const i = +b.dataset.rewind, later = turns.length - 1 - i;
     if (!confirm(`Rewind to this turn? The ${later} later turn${later === 1 ? '' : 's'} will be dropped, so Claude continues from here with only the context up to this point. Save first (♡) to keep them.`)) return;
@@ -310,9 +318,14 @@ $('historyBtn').onclick = () => {
   $('history').showModal();
   $('turns').scrollTop = $('turns').scrollHeight; // newest at the bottom, like a chat
 };
+// Start fresh: the next prompt begins a new piece, with no code or history behind it.
 $('newChat').onclick = () => {
-  if (!confirm(`Start a new conversation? The ${turns.length} earlier turns will be forgotten; the editor keeps its code.`)) return;
-  turns = []; chat.save(turns); renderChat(); status('new conversation'); $('prompt').focus();
+  const lost = [turns.length && `the ${nTurns(turns.length)} conversation`, $('code').value.trim() && 'the code in the editor']
+    .filter(Boolean).join(' and ');
+  if (lost && !confirm(`Start something new? This clears ${lost}. Save first (♡) to keep them. Anything playing keeps playing until Stop.`)) return;
+  turns = []; chat.save(turns); renderChat();
+  $('code').value = ''; $('prompt').value = ''; hideTile();
+  status('new conversation'); $('prompt').focus();
 };
 renderChat();
 const run = guard(async () => {
