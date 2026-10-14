@@ -12,6 +12,9 @@ Claude to explain what went wrong.
   version. **💬** shows the full history and can rewind to any earlier turn (Claude's context rewinds with it); **New** starts over.
   Chords are annotated with their name, notes and role in the key.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
+- **Live coding**: **● Live** re-runs the code a moment after you stop typing (once brackets balance). Each `Pdef`/`Ndef`
+  appears in the **parts strip** as a toggle (lit while playing; click to mute or unmute, and mutes survive re-runs).
+  Deleting or commenting out a part stops it on the next run; **⌘;** comments or uncomments the selected lines.
 - **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
   (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.
 - **Output device** dropdown under the scope header (remembered between launches). **Audio health**: warns when the device's real sample rate drifts from scsynth's
@@ -27,8 +30,9 @@ Claude to explain what went wrong.
 
 ## Requirements
 
-- macOS with [SuperCollider](https://supercollider.github.io/) installed at `/Applications/SuperCollider.app`
-  (set `SCLANG` to use another path)
+- macOS with [SuperCollider](https://supercollider.github.io/) installed in `/Applications` or `~/Applications`
+  (set `SCLANG` to use another path). Without it, the app shows setup steps and a **Check again** button, and starts
+  SuperCollider as soon as it's found.
 - Node 22+
 - An Anthropic API key from console.anthropic.com
 

@@ -14,3 +14,7 @@ local scsynth. See README.md for features, architecture and the security model.
 - Test page changes in a hidden Electron window with `fetch` stubbed; test Claude calls through the
   exported functions in server.js (`generate`, `gear`) with `node --env-file=.env`, since the running
   app holds the audio ports.
+- Any change to what gets sent to sclang (the run-file wrapper, .scd files) must be checked in sclang
+  itself: a separate `sclang test.scd` with `thisProcess.interpreter.compile(...)` or silent `\rest`
+  patterns, and any OSC port changed so it can't reach the running app. Page tests with `fetch`
+  stubbed never reach sclang, which is how a `; ;` syntax error once shipped to the working copy.

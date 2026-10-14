@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, access } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,18 @@ import Anthropic from '@anthropic-ai/sdk';
 import { WebSocketServer } from 'ws';
 
 const MODEL = process.env.MODEL || 'claude-sonnet-5-5';
-const SCLANG = process.env.SCLANG || '/Applications/SuperCollider.app/Contents/MacOS/sclang';
+// Where sclang may be: SCLANG from .env if set (then only there), else SuperCollider.app in
+// /Applications or ~/Applications.
+const SCLANG_PATHS = process.env.SCLANG ? [process.env.SCLANG] : [
+  '/Applications/SuperCollider.app/Contents/MacOS/sclang',
+  join(homedir(), 'Applications', 'SuperCollider.app', 'Contents', 'MacOS', 'sclang'),
+];
+async function findSclang() {
+  for (const p of SCLANG_PATHS) {
+    try { await access(p, constants.X_OK); return p; } catch {}
+  }
+  return null;
+}
 const SCOPE_PORT = 57200; // UDP: scope.scd and midi.scd send OSC here
 // .scd files are handed to sclang by path, so they must be real files (unpacked when the app is packaged)
 const here = (name) => fileURLToPath(new URL(`./${name}`, import.meta.url)).replace('app.asar', 'app.asar.unpacked');
@@ -20,7 +32,7 @@ Rules:
 - The code is run as a whole file inside a Routine (fork), so s.sync and .wait are allowed at top level; no outer ( ) needed.
 - Use \`s\` for the server. Do not call s.boot, s.quit or s.waitForBoot.
 - Define SynthDefs with .add (not .send) and call s.sync before playing them. Use Pdef/Ndef/Pbind/Routine for patterns.
-- Assign long-running things to Ndef/Pdef names or ~variables so re-running replaces rather than stacks sound.
+- Give every ongoing sound its own named Pdef or Ndef, one per musical part (e.g. Pdef(\\kick), Pdef(\\bass), Ndef(\\pad)), started with .play. Don't play ongoing sound with bare Synth(...), {...}.play or a loose Routine. The app shows each Pdef/Ndef as a toggle, re-runs replace them in place, and commenting one out stops it.
 - To send MIDI, use the pre-made port ~midi (the UI shows a MIDI tile; never create MIDIClient or MIDIOut yourself): Pbind(\\type, \\midi, \\midiout, ~midi, \\midinote, Pseq([...]), \\dur, 0.25, \\amp, 0.6) wrapped in Pdef(\\name, ...).play, or ~midi.noteOn(chan, note, vel) / ~midi.noteOff(chan, note) / ~midi.control(chan, cc, value) inside a Routine. MIDI alone makes no sound, so pair it with a SynthDef pattern when the user wants to hear it.
 - When the code plays chords (always when the user asks for chords, a progression or harmony), annotate each chord with a // comment giving its name, its notes and its role in the key, e.g. // Am7: A C E G (ii in G major), next to where it is defined. For a progression, also add a one-line comment above it naming the key and the progression in Roman numerals.
 - Whenever notes are written as numbers in an array, put a // comment on the same line naming each note in order, so the numbers can be read as music. MIDI note numbers (\\midinote, .midicps): absolute names with octave, where 60 = C4, e.g. Pseq([60, 63, 67, 70]) // C4 Eb4 G4 Bb4. Scale degrees (\\degree with \\scale, \\root, \\octave): the notes they produce in that key, e.g. Pseq([0, 2, 4]) // C E G (degrees 1 3 5 of C major). Semitone offsets added to a root: the notes for that root, e.g. [0, 4, 7] // C E G on root C. Spell sharps or flats to suit the key, and use "rest" for \\rest or Rest().
@@ -209,43 +221,57 @@ export async function start({
   };
 
   // --- sclang ---
-  // sclang ignores stdin when it's Node's default socketpair; a real pipe (via cat) works.
-  // detached => own process group, so sh, cat, sclang and the scsynth it boots can be killed together.
-  // scope.scd reads the chosen output device from INSTRUMENT_OUT_DEVICE, so it boots on it directly
-  const env = { ...process.env };
-  if (settings.outDevice) env.INSTRUMENT_OUT_DEVICE = settings.outDevice; else delete env.INSTRUMENT_OUT_DEVICE;
-  const sc = spawn('/bin/sh', ['-c', 'cat | "$0"', SCLANG], { detached: true, env });
-  sc.stdout.on('data', (d) => { log(d); broadcast('log', d.toString()); });
-  sc.stderr.on('data', (d) => { log(d); broadcast('log', d.toString()); });
   // Output since the last run, so a failed run's errors can be sent to Claude.
   let sinceRun = '';
   let lastRunCode = '';
   const capture = (d) => { sinceRun = (sinceRun + d).slice(-20000); };
-  sc.stdout.on('data', capture);
-  sc.stderr.on('data', capture);
-  sc.on('exit', (code) => broadcast('log', `sclang exited (${code})\n`));
   // Audio status for the page: scsynth's output device (from its boot log) plus the /audio reports.
   let audio = { running: false, nominal: 0, actual: 0, device: null };
   let devices = { list: [], selected: settings.outDevice || null }; // selected null = system default
+  let parts = []; // [{ kind: 'pdef'|'ndef', name, playing, muted }] from parts.scd
   let bootLog = '';
-  sc.stdout.on('data', (d) => {
-    bootLog = (bootLog + d).slice(-4000);
-    const m = [...bootLog.matchAll(/"([^"]+)" Output Device/g)].at(-1);
-    if (m && m[1] !== audio.device) { audio = { ...audio, device: m[1] }; broadcast('audio', audio); }
-  });
   // Input sent while the class library is still compiling gets lost, so queue until sclang's banner.
+  let sc = null; // the sh | sclang process; null until SuperCollider is found
   let scReady = false;
   const scQueue = [];
-  const scEval = (line) => (scReady ? sc.stdin.write(line + '\n') : scQueue.push(line)); // one line = one statement
-  sc.stdout.on('data', function onBanner(d) {
-    if (!d.toString().includes('Welcome to SuperCollider')) return;
-    sc.stdout.off('data', onBanner);
-    setTimeout(() => { scReady = true; scQueue.splice(0).forEach(scEval); }, 1000);
-  });
-  // scope.scd boots the server (waitForBoot) and starts streaming the output to us
-  scEval(`("${here('scope.scd')}").load;`);
-  // midi.scd defines ~midi, a MIDIOut stand-in whose traffic is relayed to the page's MIDI tile
-  scEval(`("${here('midi.scd')}").load;`);
+  const scEval = (line) => (sc && scReady ? sc.stdin.write(line + '\n') : scQueue.push(line)); // one line = one statement
+
+  // Without SuperCollider the page shows setup instructions instead, and asks again (/recheck) once
+  // the user has installed it; then sclang starts without restarting the app.
+  function launchSclang(path) {
+    // sclang ignores stdin when it's Node's default socketpair; a real pipe (via cat) works.
+    // detached => own process group, so sh, cat, sclang and the scsynth it boots can be killed together.
+    // scope.scd reads the chosen output device from INSTRUMENT_OUT_DEVICE, so it boots on it directly
+    const env = { ...process.env };
+    if (settings.outDevice) env.INSTRUMENT_OUT_DEVICE = settings.outDevice; else delete env.INSTRUMENT_OUT_DEVICE;
+    sc = spawn('/bin/sh', ['-c', 'cat | "$0"', path], { detached: true, env });
+    sc.stdout.on('data', (d) => { log(d); broadcast('log', d.toString()); });
+    sc.stderr.on('data', (d) => { log(d); broadcast('log', d.toString()); });
+    sc.stdout.on('data', capture);
+    sc.stderr.on('data', capture);
+    sc.on('exit', (code) => broadcast('log', `sclang exited (${code})\n`));
+    sc.stdout.on('data', (d) => {
+      bootLog = (bootLog + d).slice(-4000);
+      const m = [...bootLog.matchAll(/"([^"]+)" Output Device/g)].at(-1);
+      if (m && m[1] !== audio.device) { audio = { ...audio, device: m[1] }; broadcast('audio', audio); }
+    });
+    sc.stdout.on('data', function onBanner(d) {
+      if (!d.toString().includes('Welcome to SuperCollider')) return;
+      sc.stdout.off('data', onBanner);
+      setTimeout(() => { scReady = true; scQueue.splice(0).forEach(scEval); }, 1000);
+    });
+    // These go first; anything queued while SuperCollider was missing is dropped.
+    scQueue.length = 0;
+    // scope.scd boots the server (waitForBoot) and starts streaming the output to us
+    scEval(`("${here('scope.scd')}").load;`);
+    // midi.scd defines ~midi, a MIDIOut stand-in whose traffic is relayed to the page's MIDI tile
+    scEval(`("${here('midi.scd')}").load;`);
+    // parts.scd tracks Pdefs/Ndefs for the parts strip and stops the ones the code no longer mentions
+    scEval(`("${here('parts.scd')}").load;`);
+  }
+  const found = await findSclang();
+  if (found) launchSclang(found);
+  else log(`SuperCollider not found (looked in ${SCLANG_PATHS.join(', ')}); the page shows setup steps.\n`);
 
   // --- scope + MIDI: sclang sends OSC over UDP; relay to the page ---
   const udp = dgram.createSocket('udp4');
@@ -282,6 +308,18 @@ export async function start({
       for (const t of tags) { if (t !== 's') break; const e = msg.indexOf(0, off); list.push(msg.toString('utf8', off, e)); off = padded(e); }
       devices = { ...devices, list };
       broadcast('devices', devices);
+    } else if (address === '/parts') { // kind name playing muted, repeated
+      const vals = [];
+      for (const t of tags) {
+        if (t === 's') { const e = msg.indexOf(0, off); vals.push(msg.toString('utf8', off, e)); off = padded(e); }
+        else if (t === 'i') { vals.push(msg.readInt32BE(off)); off += 4; }
+        else break;
+      }
+      parts = [];
+      for (let i = 0; i + 3 < vals.length; i += 4) {
+        parts.push({ kind: vals[i], name: vals[i + 1], playing: vals[i + 2] === 1, muted: vals[i + 3] === 1 });
+      }
+      broadcast('parts', parts);
     } else if (address === '/audio') { // running(int) nominalRate actualRate
       audio = { ...audio, running: msg.readInt32BE(off) === 1, nominal: msg.readFloatBE(off + 4), actual: msg.readFloatBE(off + 8) };
       broadcast('audio', audio);
@@ -291,13 +329,24 @@ export async function start({
 
   const tmp = await mkdtemp(join(tmpdir(), 'instrument-'));
   let runCount = 0;
-  async function runCode(code) {
+  // A part key names a Pdef or Ndef: 'pdef:drums', 'ndef:pad'. Checked strictly, since keys are
+  // written into sclang source.
+  const PART_KEY = /^(pdef|ndef):[A-Za-z_][A-Za-z0-9_]*$/;
+
+  // keep: the part keys the code mentions outside comments (the page works them out). After the code
+  // runs, parts.scd stops every other part, so deleting or commenting out a part silences it.
+  async function runCode(code, keep) {
+    const keys = (Array.isArray(keep) ? keep : []).filter((k) => typeof k === 'string' && PART_KEY.test(k));
     // Write to a file and load it: avoids stdin line-by-line interpretation of multi-line code.
     const file = join(tmp, `run${runCount++ % 2}.scd`);
     sinceRun = '';
     lastRunCode = code;
-    // `fork {` shares line 1 with the code so sclang's line numbers match the editor's
-    await writeFile(file, `fork { ${code}\n}`); // Routine context makes s.sync / wait legal anywhere
+    // `fork {` shares line 1 with the code so sclang's line numbers match the editor's, and its
+    // Routine context makes s.sync / wait legal anywhere. The parts sync runs after the code, which
+    // sits in its own function so the sync is a separate statement however the code ends (`; ;`,
+    // an empty statement, is a syntax error in sclang). It only runs if the code finished cleanly.
+    const sync = `~partsSync.value([${keys.map((k) => `'${k}'`).join(', ')}]);`;
+    await writeFile(file, Array.isArray(keep) ? `fork { { ${code}\n}.value;\n${sync}\n}` : `fork { ${code}\n}`);
     scEval(`("${file}").load;`);
   }
 
@@ -346,6 +395,13 @@ export async function start({
       if (req.method === 'POST' && !req.headers['content-type']?.startsWith('application/json')) {
         return json(res, 415, { error: 'expected application/json' });
       }
+      if (req.method === 'GET' && req.url === '/status') {
+        return json(res, 200, { supercollider: !!sc, paths: SCLANG_PATHS });
+      }
+      if (req.method === 'POST' && req.url === '/recheck') { // the setup screen's "Check again"
+        if (!sc) { const path = await findSclang(); if (path) launchSclang(path); }
+        return json(res, 200, { supercollider: !!sc });
+      }
       if (req.method === 'POST' && req.url === '/generate') {
         const { prompt, code, history, model, effort } = await readBody(req);
         return json(res, 200, await generate(prompt, code, history, req.headers['x-api-key'], { model, effort }));
@@ -357,7 +413,14 @@ export async function start({
         return json(res, 200, await gear(req.headers['x-api-key'], await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/run') {
-        await runCode((await readBody(req)).code);
+        const { code, keep } = await readBody(req);
+        await runCode(code, keep);
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && req.url === '/part') { // the parts strip's toggle
+        const { key, on } = await readBody(req);
+        if (typeof key !== 'string' || !PART_KEY.test(key)) return json(res, 400, { error: 'bad part' });
+        scEval(`~partsSet.value('${key}', ${on ? 'true' : 'false'});`);
         return json(res, 200, { ok: true });
       }
       if (req.method === 'POST' && req.url === '/restart-audio') {
@@ -396,6 +459,7 @@ export async function start({
     clients.add(ws);
     ws.send(JSON.stringify({ type: 'audio', data: audio }));
     ws.send(JSON.stringify({ type: 'devices', data: devices }));
+    ws.send(JSON.stringify({ type: 'parts', data: parts }));
     ws.on('close', () => clients.delete(ws));
   });
 
@@ -408,7 +472,7 @@ export async function start({
   function stop() {
     if (stopped) return;
     stopped = true;
-    try { process.kill(-sc.pid); } catch {} // the whole group: sh, cat, sclang and its scsynth
+    if (sc) try { process.kill(-sc.pid); } catch {} // the whole group: sh, cat, sclang and its scsynth
     udp.close();
     server.close();
   }

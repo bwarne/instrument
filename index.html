@@ -58,10 +58,17 @@
   #code::placeholder { color:#4d6466; }
   /* find: #marks sits behind the transparent textarea with the same text and layout, so <mark>s
      line up with the matches; it scrolls with the textarea */
-  #editor { position:relative; min-height:0; background:#0d1415; border-radius:4px; }
-  #editor #code { position:absolute; inset:0; background:transparent; }
+  #editor { position:relative; min-height:0; background:#0d1415; border-radius:4px; --gutter:3.4em; }
+  #editor #code { position:absolute; inset:0 0 0 var(--gutter); width:auto; height:auto; background:transparent;
+                  border-top-left-radius:0; border-bottom-left-radius:0; border-left-color:transparent; }
+  /* line numbers: one row per line, as tall as that line wraps to (measured from #marks) */
+  #gutter { position:absolute; left:0; top:0; bottom:0; width:var(--gutter); overflow:hidden; user-select:none;
+            padding:13px 8px 13px 0; text-align:right; color:#3b5355; border-right:1px solid #1f2c2e;
+            font:13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric:tabular-nums; }
+  #gutter .cur { color:#7aa9a3; }
+  #gutter .err { color:#fff; background:#a33; border-radius:3px 0 0 3px; margin-right:-8px; padding-right:8px; }
   #code, #marks { scrollbar-gutter:stable; }
-  #marks { position:absolute; inset:0; margin:0; overflow:hidden; pointer-events:none; color:transparent;
+  #marks { position:absolute; inset:0 0 0 var(--gutter); margin:0; overflow:hidden; pointer-events:none; color:transparent;
            font:13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-ligatures:none;
            padding:12px 14px; border:1px solid transparent; white-space:pre-wrap; overflow-wrap:break-word; tab-size:2; }
   #marks mark { background:#5a4a12; color:transparent; border-radius:2px; }
@@ -163,6 +170,26 @@
   #turns .current { color:var(--accent); }
   #usage:empty { display:none; }
   #usage b { color:var(--fg); font-weight:500; }
+  /* parts strip: one toggle per Pdef/Ndef */
+  .parts { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
+  .parts button { padding:2px 9px; font-size:12px; border-radius:11px; }
+  #liveBtn.on { border-color:#f66; color:#f88; }
+  #partsList { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .part { color:var(--dim); }
+  .part.playing { color:#0d1415; background:var(--accent); border-color:var(--accent); }
+  .part.muted { text-decoration:line-through; color:#777; border-style:dashed; }
+  .part.orphan { opacity:.6; font-style:italic; }
+  .part .k { opacity:.6; margin-right:3px; font-size:10px; }
+  /* setup screen, shown instead of the app until SuperCollider is installed */
+  #setup { position:fixed; inset:0; z-index:10; background:var(--bg); display:grid; place-items:center; padding:24px; overflow:auto; }
+  #setup[hidden] { display:none; }
+  #setup .card { max-width:560px; font:15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; color:#ccc; }
+  #setup h1 { font-size:24px; color:var(--fg); margin:0 0 10px; }
+  #setup ol { padding-left:1.3em; } #setup li { margin:6px 0; }
+  #setup a { color:var(--accent); }
+  #setup code { background:var(--panel); padding:1px 5px; border-radius:3px; font-size:13px; }
+  #setup .row { align-items:center; margin:16px 0 8px; }
+  #setupStatus { color:var(--dim); }
   .callcost { color:var(--dim); font-size:11px; margin-top:6px; font-variant-numeric:tabular-nums; }
   .callcost:empty { display:none; }
   .callcost b { color:#aaa; font-weight:500; }
@@ -186,6 +213,10 @@
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
     <div id="usage"></div>
+  </div>
+  <div class="parts">
+    <button id="liveBtn" title="Live: re-run the code by itself about a second after you stop typing (when the brackets balance). Errors from live edits aren't sent to Claude unless you press Analyze.">○ Live</button>
+    <span id="partsList" class="hint">parts: each Pdef or Ndef in your code shows up here as a toggle once it has run</span>
   </div>
 </div>
   <dialog id="gear">
@@ -242,6 +273,7 @@
     </form>
   </dialog>
   <div id="editor">
+    <div id="gutter" aria-hidden="true"></div>
     <pre id="marks" aria-hidden="true"></pre>
     <textarea id="code" spellcheck="false" placeholder="// generated SuperCollider code appears here — edit freely"></textarea>
     <div id="find" hidden>
@@ -278,6 +310,21 @@
     <div class="callcost" id="errCost"></div>
   </section>
 </aside>
+<div id="setup" hidden>
+  <div class="card">
+    <h1>Install SuperCollider to get started</h1>
+    <p>AnInstrument writes SuperCollider code and plays it with SuperCollider, a free, open-source audio engine. It isn't installed on this Mac yet.</p>
+    <ol>
+      <li><a href="https://supercollider.github.io/downloads" target="_blank" rel="noopener">Download SuperCollider for macOS</a> (free).</li>
+      <li>Open the downloaded file and drag <b>SuperCollider</b> into your <b>Applications</b> folder.</li>
+      <li>Open SuperCollider once so macOS can confirm it's safe to run, then quit it. AnInstrument runs its own copy in the background, and the two can't both play at once.</li>
+      <li>Come back here and click <b>Check again</b>.</li>
+    </ol>
+    <p class="hint">Using Homebrew? <code>brew install --cask supercollider</code> works too.</p>
+    <div class="row"><button id="recheck" class="go">Check again</button><span id="setupStatus"></span></div>
+    <p class="hint" id="setupPaths"></p>
+  </div>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const status = (t) => ($('status').textContent = t);
@@ -396,13 +443,18 @@ $('newChat').onclick = () => {
   status('new conversation'); $('prompt').focus();
 };
 renderChat();
-const run = guard(async () => {
+// Every run sends the parts the code mentions outside comments; the server stops all the others,
+// so deleting or commenting out a Pdef/Ndef silences it.
+let liveRunning = false; // the latest run came from live mode, not the Run button
+async function sendRun(isLive) {
   hideTile();
-  watchForError = true;
+  watchForError = true; liveRunning = isLive;
+  errLine = 0; renderGutter();
   lastRunCode = $('code').value;
-  await post('/run', { code: lastRunCode });
-  status('sent');
-});
+  await post('/run', { code: lastRunCode, keep: activeParts(lastRunCode) });
+  status(isLive ? 'live ↻' : 'sent');
+}
+const run = guard(() => sendRun(false));
 const stop = guard(async () => { midiAllOff(); await post('/stop', {}); status('stopped'); });
 
 $('cog').onclick = () => {
@@ -490,14 +542,31 @@ function renderMarks() {
   if (q) for (let i = code.toLowerCase().indexOf(q.toLowerCase()); i >= 0; i = code.toLowerCase().indexOf(q.toLowerCase(), i + q.length)) findHits.push(i);
   if (findCur >= findHits.length) findCur = findHits.length - 1;
   if (findCur < 0 && findHits.length) findCur = 0;
-  let html = '', at = 0;
-  findHits.forEach((h, n) => {
-    html += esc(code.slice(at, h)) + `<mark${n === findCur ? ' class="cur"' : ''}>${esc(code.slice(h, h + q.length))}</mark>`;
-    at = h + q.length;
-  });
-  $('marks').innerHTML = html + esc(code.slice(at)) + '\n'; // trailing newline: a final empty line still has height
-  $('marks').scrollTop = $('code').scrollTop;
+  // One <div> per line, with matches inside, so each line's height (it may wrap) can be measured for
+  // the line numbers. A search can't span lines, since the find box is a single line.
+  let html = '', off = 0, n = 0;
+  for (const line of code.split('\n')) {
+    let row = '', at = off;
+    for (; n < findHits.length && findHits[n] < off + line.length; n++) {
+      const h = findHits[n];
+      row += esc(code.slice(at, h)) + `<mark${n === findCur ? ' class="cur"' : ''}>${esc(code.slice(h, h + q.length))}</mark>`;
+      at = h + q.length;
+    }
+    html += `<div>${row + esc(code.slice(at, off + line.length)) || '\u200b'}</div>`; // empty lines still need height
+    off += line.length + 1;
+  }
+  $('marks').innerHTML = html;
+  renderGutter();
   $('findCount').textContent = q ? (findHits.length ? `${findCur + 1} of ${findHits.length}` : 'none') : '';
+}
+// Line numbers, each as tall as its line in #marks. errLine is the line sclang's last error named.
+let errLine = 0;
+function renderGutter() {
+  const ta = $('code'), cur = ta.value.slice(0, ta.selectionStart).split('\n').length;
+  $('gutter').innerHTML = [...$('marks').children].map((d, i) =>
+    `<div style="height:${d.offsetHeight}px"${i + 1 === errLine ? ' class="err"' : i + 1 === cur ? ' class="cur"' : ''}>${i + 1}</div>`).join('')
+    + '<div style="height:40px"></div>'; // room to scroll as far as the textarea can
+  $('marks').scrollTop = $('gutter').scrollTop = ta.scrollTop;
 }
 function findStep(d) {
   if (!findHits.length) return;
@@ -533,10 +602,15 @@ $('findClose').onclick = closeFind;
 const valueProp = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
 Object.defineProperty($('code'), 'value', {
   get() { return valueProp.get.call(this); },
-  set(v) { valueProp.set.call(this, v); if (!$('find').hidden) renderMarks(); },
+  set(v) { valueProp.set.call(this, v); renderMarks(); renderParts(); },
 });
-$('code').addEventListener('scroll', () => { $('marks').scrollTop = $('code').scrollTop; });
-$('code').addEventListener('input', () => { if (!$('find').hidden) renderMarks(); });
+$('code').addEventListener('scroll', () => { $('marks').scrollTop = $('gutter').scrollTop = $('code').scrollTop; });
+$('code').addEventListener('input', renderMarks);
+// the current line's number is brighter: follow the cursor
+for (const ev of ['keyup', 'click', 'select']) $('code').addEventListener(ev, renderGutter);
+new ResizeObserver(renderMarks).observe($('code')); // a new width changes how lines wrap
+renderMarks();
+
 addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'f') { e.preventDefault(); openFind(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'g' && !$('find').hidden) { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
@@ -640,9 +714,155 @@ $('gearBtn').onclick = () => {
 };
 $('gearRefresh').onclick = askGear;
 
+// --- parts strip and live coding -----------------------------------------------
+// Reads sclang code roughly: enough to skip comments (// and nested /* */) and to tell strings and
+// character literals apart from code. Returns the code with comments removed, strings kept.
+function stripComments(code) {
+  let out = '', i = 0;
+  while (i < code.length) {
+    const c = code[i], n = code[i + 1];
+    if (c === '/' && n === '/') { while (i < code.length && code[i] !== '\n') i++; continue; }
+    if (c === '/' && n === '*') {
+      let depth = 0;
+      do {
+        if (code[i] === '/' && code[i + 1] === '*') { depth++; i += 2; }
+        else if (code[i] === '*' && code[i + 1] === '/') { depth--; i += 2; }
+        else i++;
+      } while (depth > 0 && i < code.length);
+      continue;
+    }
+    if (c === '"' || c === "'") { // string or quoted symbol: copy through, honouring \ escapes
+      let j = i + 1;
+      while (j < code.length && code[j] !== c) j += code[j] === '\\' ? 2 : 1;
+      out += code.slice(i, j + 1); i = j + 1; continue;
+    }
+    if (c === '$') { out += code.slice(i, i + 2); i += 2; continue; } // character literal, e.g. $/
+    out += c; i++;
+  }
+  return out;
+}
+// Part keys ('pdef:drums', 'ndef:pad') for every Pdef(\name…) / Ndef('name'…) outside comments.
+function activeParts(code) {
+  const keys = new Set();
+  // empty strings and symbols that aren't plain names, so text like "uses Pdef(\\x)" doesn't count
+  const text = stripComments(code).replace(/(["'])((?:(?!\1)[^\\]|\\.)*)\1/g, (m, q, body) => (/^\w+$/.test(body) ? m : q + q));
+  for (const m of text.matchAll(/\b(Pdef|Ndef)\s*\(\s*(?:\\(\w+)|'(\w+)'|"(\w+)")/g)) {
+    keys.add(`${m[1].toLowerCase()}:${m[2] || m[3] || m[4]}`);
+  }
+  return [...keys];
+}
+// Brackets and strings balance: a live edit is only run once it could be complete.
+function balanced(code) {
+  const t = stripComments(code);
+  if ((t.match(/"/g) || []).length % 2) return false;
+  const bare = t.replace(/"(?:[^"\\]|\\.)*"/g, '').replace(/'(?:[^'\\]|\\.)*'/g, '').replace(/\$./g, '');
+  const stack = [], pair = { ')': '(', ']': '[', '}': '{' };
+  for (const ch of bare) {
+    if ('([{'.includes(ch)) stack.push(ch);
+    else if (ch in pair && stack.pop() !== pair[ch]) return false;
+  }
+  return !stack.length;
+}
+
+let parts = []; // from sclang: [{ kind, name, playing, muted }]
+const partKey = (p) => `${p.kind}:${p.name}`;
+function renderParts() {
+  const inCode = new Set(activeParts($('code').value));
+  // parts in the code, plus anything still sounding that the code no longer has (stops on next run)
+  const shown = parts.filter((p) => inCode.has(partKey(p)) || p.playing);
+  if (!shown.length) {
+    $('partsList').className = 'hint';
+    $('partsList').textContent = 'parts: each Pdef or Ndef in your code shows up here as a toggle once it has run';
+    return;
+  }
+  $('partsList').className = '';
+  $('partsList').innerHTML = shown.map((p) => {
+    const orphan = !inCode.has(partKey(p));
+    const state = p.muted ? 'muted' : p.playing ? 'playing' : 'stopped';
+    const tip = orphan ? 'Not in the code any more: stops on the next run. Click to stop now.'
+      : p.muted ? 'Muted: stays off when the code re-runs. Click to unmute.'
+      : p.playing ? 'Playing. Click to mute.' : 'Stopped. Click to play.';
+    return `<button class="part ${state}${orphan ? ' orphan' : ''}" data-key="${esc(partKey(p))}" data-on="${!p.playing}" title="${esc(`${p.kind === 'pdef' ? 'Pdef' : 'Ndef'} \\${p.name} · ${tip}`)}"><span class="k">${p.kind === 'pdef' ? 'P' : 'N'}</span>${esc(p.name)}</button>`;
+  }).join('');
+}
+$('partsList').onclick = async (e) => {
+  const b = e.target.closest('button.part'); if (!b) return;
+  try { await post('/part', { key: b.dataset.key, on: b.dataset.on === 'true' }); }
+  catch (err) { log('! ' + err.message + '\n'); }
+};
+
+const live = {
+  get: () => { try { return localStorage.getItem('live') === '1'; } catch { return false; } },
+  set: (v) => { try { localStorage.setItem('live', v ? '1' : '0'); } catch {} },
+};
+function renderLive() {
+  $('liveBtn').classList.toggle('on', live.get());
+  $('liveBtn').textContent = live.get() ? '● Live' : '○ Live';
+}
+$('liveBtn').onclick = () => { live.set(!live.get()); renderLive(); status(live.get() ? 'live: edits re-run by themselves' : ''); };
+renderLive();
+let liveTimer = 0, partsTimer = 0;
+$('code').addEventListener('input', () => {
+  clearTimeout(partsTimer); partsTimer = setTimeout(renderParts, 150);
+  if (!live.get()) return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(guard(async () => {
+    const code = $('code').value;
+    if (!code.trim() || code === lastRunCode) return;
+    if (!balanced(code)) { status('live: waiting for brackets to balance'); return; }
+    await sendRun(true);
+  }), 900);
+});
+
+// ⌘; comments or uncomments the selected lines (or the line with the cursor). Uses insertText so
+// it can be undone with ⌘Z, and fires an input event, so live mode picks it up.
+function toggleComment() {
+  const ta = $('code'), v = ta.value;
+  const start = v.lastIndexOf('\n', ta.selectionStart - 1) + 1;
+  let end = v.indexOf('\n', ta.selectionEnd - (ta.selectionEnd > ta.selectionStart && v[ta.selectionEnd - 1] === '\n' ? 1 : 0));
+  if (end < 0) end = v.length;
+  const lines = v.slice(start, end).split('\n');
+  const filled = lines.filter((l) => l.trim());
+  const commented = filled.length && filled.every((l) => /^\s*\/\//.test(l));
+  const indent = Math.min(...filled.map((l) => l.match(/^\s*/)[0].length));
+  const out = lines.map((l) => {
+    if (!l.trim()) return l;
+    return commented ? l.replace(/^(\s*)\/\/ ?/, '$1') : l.slice(0, indent) + '// ' + l.slice(indent);
+  }).join('\n');
+  ta.focus(); ta.setSelectionRange(start, end);
+  document.execCommand('insertText', false, out);
+  ta.setSelectionRange(start, start + out.length);
+}
+$('code').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === ';') { e.preventDefault(); toggleComment(); }
+});
+
+// --- setup screen: shown instead of the app until SuperCollider is installed ------
+fetch('/status').then((r) => r.json()).then((st) => {
+  if (st.supercollider) return;
+  $('setupPaths').textContent = 'AnInstrument looks for it in: ' + st.paths.map((p) => p.replace(/\/Contents\/MacOS\/sclang$/, '')).join(', ');
+  $('setup').hidden = false;
+}).catch(() => {});
+$('recheck').onclick = async () => {
+  $('setupStatus').textContent = 'Checking…';
+  try {
+    const { supercollider } = await post('/recheck', {});
+    if (supercollider) {
+      $('setupStatus').textContent = 'Found it! Starting SuperCollider…';
+      setTimeout(() => location.reload(), 1500); // reconnect so the page gets the fresh audio state
+    } else {
+      $('setupStatus').textContent = 'Still not found. Is SuperCollider.app in your Applications folder?';
+    }
+  } catch (e) { $('setupStatus').textContent = e.message; }
+};
+
 const logEl = $('log');
 function log(t) {
   logEl.textContent += t; logEl.scrollTop = logEl.scrollHeight;
+  // sclang names the line of a syntax error ("line 3 char 7"); the run file starts the code on line 1,
+  // so it's the editor's line too. Mark the first one in the gutter.
+  const at = !errLine && watchForError && t.match(/line (\d+) char \d+/);
+  if (at && +at[1] <= $('code').value.split('\n').length) { errLine = +at[1]; renderGutter(); }
   if (watchForError) {
     const kind = /ERROR:/.test(t) ? 'error' : /WARNING:/.test(t) ? 'warning' : null;
     if (kind) onRunIssue(kind);
@@ -677,6 +897,7 @@ function onRunIssue(kind) {
   const what = kind === 'error' ? 'an error' : 'a warning';
   clearTimeout(errTimer);
   if (!auto.get()) { showTile(`Run produced ${what}. Press Analyze to ask Claude about it.`); return; }
+  if (liveRunning) { showTile(`A live edit produced ${what}. Not sent to Claude while you type; press Analyze to ask.`); return; }
   showTile(`${what} in sclang output…`, true);
   // let sclang finish printing (an error dump, or an error after the warning), then analyze once
   errTimer = setTimeout(() => { watchForError = false; analyze(); }, 1500);
@@ -725,6 +946,7 @@ ws.onmessage = (e) => {
   else if (m.type === 'levels') onLevels(m.data);
   else if (m.type === 'audio') onAudio(m.data);
   else if (m.type === 'devices') onDevices(m.data);
+  else if (m.type === 'parts') { parts = m.data; renderParts(); }
 };
 ws.onclose = () => log('\n[disconnected from server]\n');
 
