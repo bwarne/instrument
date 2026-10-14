@@ -61,9 +61,6 @@
       "provider": "github",
       "owner": "jonowar",
       "repo": "instrument"
-    },
-    "zip": {
-      "artifactName": "${productName}-${arch}-mac.${ext}"
     }
   }
 }

@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.."
 VERSION=$(node -p "require('./package.json').version")
 TAG="v$VERSION"
 NOTES=${1:-"AnInstrument $VERSION"}
-FILES="dist/AnInstrument-arm64.dmg dist/AnInstrument-arm64-mac.zip dist/AnInstrument-arm64-mac.zip.blockmap dist/latest-mac.yml"
+ZIP="dist/AnInstrument-$VERSION-arm64-mac.zip"
+FILES="dist/AnInstrument-arm64.dmg $ZIP $ZIP.blockmap dist/latest-mac.yml"
 
 for f in $FILES; do [ -f "$f" ] || { echo "missing $f: run npm run release first"; exit 1; }; done
 grep -q "^version: $VERSION$" dist/latest-mac.yml || { echo "dist/latest-mac.yml isn't for $VERSION: run npm run release again"; exit 1; }
