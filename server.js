@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile, writeFile, mkdtemp, mkdir } from 'node:fs/promises';
+import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dgram from 'node:dgram';
@@ -85,7 +85,21 @@ async function ask(apiKey, system, content, maxTokens) {
 // --- server ---------------------------------------------------------------
 // Starts sclang (which boots scsynth) and the HTTP/WebSocket server the page talks to.
 // Returns { port, stop }. Used by `node server.js` and by the Electron app (electron/main.js).
-export async function start({ port = 3000, log = (d) => process.stdout.write(d) } = {}) {
+// dataDir holds settings.json (the chosen output device). It matches the Electron app's userData folder,
+// so the app and `npm start` share the choice.
+export async function start({
+  port = 3000,
+  log = (d) => process.stdout.write(d),
+  dataDir = join(homedir(), 'Library', 'Application Support', 'Instrument'),
+} = {}) {
+  const settingsFile = join(dataDir, 'settings.json');
+  let settings = {};
+  try { settings = JSON.parse(await readFile(settingsFile, 'utf8')); } catch {}
+  const saveSettings = async () => {
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(settingsFile, JSON.stringify(settings, null, 2));
+  };
+
   const clients = new Set();
   const broadcast = (type, data) => {
     const msg = JSON.stringify({ type, data });
@@ -95,7 +109,10 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
   // --- sclang ---
   // sclang ignores stdin when it's Node's default socketpair; a real pipe (via cat) works.
   // detached => own process group, so sh, cat, sclang and the scsynth it boots can be killed together.
-  const sc = spawn('/bin/sh', ['-c', 'cat | "$0"', SCLANG], { detached: true });
+  // scope.scd reads the chosen output device from INSTRUMENT_OUT_DEVICE, so it boots on it directly
+  const env = { ...process.env };
+  if (settings.outDevice) env.INSTRUMENT_OUT_DEVICE = settings.outDevice; else delete env.INSTRUMENT_OUT_DEVICE;
+  const sc = spawn('/bin/sh', ['-c', 'cat | "$0"', SCLANG], { detached: true, env });
   sc.stdout.on('data', (d) => { log(d); broadcast('log', d.toString()); });
   sc.stderr.on('data', (d) => { log(d); broadcast('log', d.toString()); });
   // Output since the last run, so a failed run's errors can be sent to Claude.
@@ -107,6 +124,7 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
   sc.on('exit', (code) => broadcast('log', `sclang exited (${code})\n`));
   // Audio status for the page: scsynth's output device (from its boot log) plus the /audio reports.
   let audio = { running: false, nominal: 0, actual: 0, device: null };
+  let devices = { list: [], selected: settings.outDevice || null }; // selected null = system default
   let bootLog = '';
   sc.stdout.on('data', (d) => {
     bootLog = (bootLog + d).slice(-4000);
@@ -131,9 +149,12 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
   const udp = dgram.createSocket('udp4');
   const padded = (n) => (n + 4) & ~3; // OSC strings are NUL-terminated and padded to 4 bytes
   udp.on('message', (msg) => {
-    if (![...clients].some((ws) => ws.readyState === 1)) return;
     const addrEnd = msg.indexOf(0);
     const address = msg.toString('latin1', 0, addrEnd);
+    // Streams are only worth decoding for a connected page; status (/audio, /devices) is kept for
+    // the next page that connects, so it must always be read. /devices is only sent when it changes.
+    const streaming = address === '/scope' || address === '/levels' || address === '/midi';
+    if (streaming && ![...clients].some((ws) => ws.readyState === 1)) return;
     const tagStart = padded(addrEnd);
     const tagEnd = msg.indexOf(0, tagStart);
     const tags = msg.toString('latin1', tagStart + 1, tagEnd); // typetag is ",fff…" without the comma
@@ -154,6 +175,11 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
       broadcast('midi', { cmd: args[0], args: args.slice(1) });
     } else if (address === '/levels') { // peakL rmsL peakR rmsR
       broadcast('levels', [0, 1, 2, 3].map((i) => msg.readFloatBE(off + i * 4)));
+    } else if (address === '/devices') { // one string per output device
+      const list = [];
+      for (const t of tags) { if (t !== 's') break; const e = msg.indexOf(0, off); list.push(msg.toString('utf8', off, e)); off = padded(e); }
+      devices = { ...devices, list };
+      broadcast('devices', devices);
     } else if (address === '/audio') { // running(int) nominalRate actualRate
       audio = { ...audio, running: msg.readInt32BE(off) === 1, nominal: msg.readFloatBE(off + 4), actual: msg.readFloatBE(off + 8) };
       broadcast('audio', audio);
@@ -242,6 +268,21 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
         scEval('~audioRestart.value;');
         return json(res, 200, { ok: true });
       }
+      if (req.method === 'POST' && req.url === '/audio-device') {
+        const { device } = await readBody(req);
+        if (device != null && typeof device !== 'string') return json(res, 400, { error: 'device must be a string or null' });
+        devices = { ...devices, selected: device || null };
+        settings.outDevice = device || undefined;
+        await saveSettings();
+        broadcast('devices', devices);
+        audio = { ...audio, running: false, device: null };
+        bootLog = '';
+        broadcast('audio', audio);
+        // as an sclang string literal, on one line (scEval sends one line per statement)
+        const lit = device ? '"' + device.replace(/[\x00-\x1f]/g, '').replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' : 'nil';
+        scEval(`~audioSetDevice.value(${lit});`);
+        return json(res, 200, { ok: true });
+      }
       if (req.method === 'POST' && req.url === '/stop') {
         scEval('CmdPeriod.run;');
         return json(res, 200, { ok: true });
@@ -255,6 +296,7 @@ export async function start({ port = 3000, log = (d) => process.stdout.write(d) 
   new WebSocketServer({ server, verifyClient: ({ req }) => trusted(req) }).on('connection', (ws) => {
     clients.add(ws);
     ws.send(JSON.stringify({ type: 'audio', data: audio }));
+    ws.send(JSON.stringify({ type: 'devices', data: devices }));
     ws.on('close', () => clients.delete(ws));
   });
 

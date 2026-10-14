@@ -11,7 +11,7 @@ Claude to explain what went wrong.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
 - **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
   (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.
-- **Audio health**: shows the output device, warns when the device's real sample rate drifts from scsynth's
+- **Output device** dropdown under the scope header (remembered between launches). **Audio health**: warns when the device's real sample rate drifts from scsynth's
   (e.g. Bluetooth headphones dropping into call mode), and **⟳ Restart audio** reboots scsynth on the current device.
 - **MIDI tile**: a piano roll of anything sent to `~midi` (visualization only unless you set `MIDI_PORT`).
 - **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
@@ -56,7 +56,6 @@ window quits it and shuts down sclang and scsynth.
 | `MODEL` | Claude model (default `claude-sonnet-5-5`) |
 | `PRICE_IN`, `PRICE_OUT` | $ per million tokens, for models not in the built-in price table |
 | `MIDI_PORT` | Part of a MIDI destination's name; also send `~midi` to that device |
-| `INSTRUMENT_OUT_DEVICE` | Audio output device name (e.g. `Scarlett Solo 4th Gen`); default is the system output |
 | `SCLANG`, `PORT` | Path to `sclang`, HTTP port (default 3000) |
 
 ## How it works

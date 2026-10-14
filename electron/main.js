@@ -48,7 +48,7 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 app.whenReady().then(async () => {
   const { start } = await import('../server.js');
   try {
-    server = await start({ port: PORT });
+    server = await start({ port: PORT, dataDir: app.getPath('userData') });
   } catch (e) {
     dialog.showErrorBox('Instrument could not start',
       e.code === 'EADDRINUSE'

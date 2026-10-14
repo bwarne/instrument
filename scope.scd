@@ -3,6 +3,7 @@
 //   /scope   snapshots of the master output (bus 0, L+R mixed to mono) for the oscilloscope
 //   /levels  peak and RMS of each channel, 20 times a second, for the level meters and clip light
 //   /audio   server status every 2 s (running, nominal and actual sample rate) for the warning bar
+//   /devices the available output devices, whenever the list changes, for the output dropdown
 var addr = NetAddr("127.0.0.1", 57200);
 var frames = 2048;                           // scope snapshot length, ~43 ms at 48 kHz
 var buf;
@@ -10,7 +11,8 @@ var buf;
 // No audio input: nothing here records, and a mismatched input device (e.g. Bluetooth headphones whose
 // mic runs at 24 kHz while their output runs at 48 kHz) otherwise stops scsynth from booting.
 s.options.numInputBusChannels = 0;
-// Output device: the system default unless INSTRUMENT_OUT_DEVICE names one (e.g. "Scarlett Solo 4th Gen")
+// Output device chosen in the app's dropdown (server.js passes it in); nil means the system default.
+// A device that isn't connected falls back to the system default.
 s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
 
 ~audioStart = {
@@ -53,12 +55,18 @@ s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
     s.quit(onComplete: { ~audioRestarting = false; ~audioStart.value });
 };
 
+// Switch output device: scsynth can only change device by rebooting
+~audioSetDevice = { |name| s.options.outDevice = name; ~audioRestart.value };
+
 // /instrumentLevels arrives as [address, nodeID, replyID, peakL, rmsL, peakR, rmsR]
 OSCFunc({ |msg| addr.sendMsg('/levels', *msg[3..6]) }, '/instrumentLevels').fix;
 
 // SkipJack keeps running through Cmd-., unlike a plain Routine
 SkipJack({
+    var devices = ServerOptions.outDevices;
     addr.sendMsg('/audio', s.serverRunning.binaryValue, (s.sampleRate ? 0).asFloat, (s.actualSampleRate ? 0).asFloat);
+    // only when it changes: headphones connected or disconnected
+    if(devices != ~lastDevices) { ~lastDevices = devices; addr.sendMsg('/devices', *devices) };
 }, 2, name: "instrumentAudioMonitor");
 
 // Cmd-. frees every synth and clears the clocks, so bring the scope back afterwards
