@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
+
+// Keep the data folder from before the app was renamed to "AnInstrument": it holds the page's
+// localStorage (API key, saved code, conversation) and settings.json, and npm start uses it too.
+app.setPath('userData', join(app.getPath('appData'), 'Instrument'));
 // .env is a fallback for ANTHROPIC_API_KEY, MODEL, MIDI_PORT etc. (the ⚙ setting is the usual route)
 for (const dir of [root, app.getPath('userData')]) {
   if (existsSync(join(dir, '.env'))) process.loadEnvFile(join(dir, '.env'));
@@ -28,7 +32,7 @@ async function createWindow() {
     height: 900,
     minWidth: 760,
     minHeight: 520,
-    title: 'Instrument',
+    title: 'AnInstrument',
     backgroundColor: '#111111', // matches the page, so there's no white flash while it loads
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
@@ -52,7 +56,7 @@ app.whenReady().then(async () => {
   try {
     server = await start({ port: PORT, dataDir: app.getPath('userData') });
   } catch (e) {
-    dialog.showErrorBox('Instrument could not start',
+    dialog.showErrorBox('AnInstrument could not start',
       e.code === 'EADDRINUSE'
         ? `Port ${PORT} is in use. Is the web version (npm start) or another copy already running?`
         : String(e.message || e));

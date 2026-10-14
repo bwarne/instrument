@@ -22,10 +22,10 @@
     "electron": "^41.7.1",
     "electron-builder": "^26.15.3"
   },
-  "productName": "Instrument",
+  "productName": "AnInstrument",
   "build": {
     "appId": "net.jonowar.instrument",
-    "productName": "Instrument",
+    "productName": "AnInstrument",
     "files": [
       "server.js",
       "index.html",

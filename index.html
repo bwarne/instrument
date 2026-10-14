@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Instrument</title>
+<title>AnInstrument</title>
 <style>
   :root { --bg:#111; --fg:#ddd; --dim:#777; --panel:#1b1b1b; --accent:#7fd; --err:#f77; }
   * { box-sizing: border-box; }
@@ -107,7 +107,7 @@
     <button id="gen" class="go">Generate</button>
     <button id="run">Run ⌘↵</button>
     <button id="stop">Stop ⌘.</button>
-    <button id="heart" title="Save this code with a short name, or load a saved one">♡ Saved</button>
+    <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
     <button id="cog" title="Settings">⚙</button>
     <span id="status"></span>
   </div>
@@ -128,7 +128,7 @@
       <label>Anthropic API key<br>
         <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
       </label>
-      <p class="hint">Stored in this browser only (localStorage) and sent to your local server with each request. Leave empty to use ANTHROPIC_API_KEY from .env.</p>
+      <p class="hint">Stored in <span class="where">this browser</span> only and sent to your local server with each request. Leave empty to use ANTHROPIC_API_KEY from .env.</p>
       <div class="row speed">
         <label>Effort<br>
           <select id="effort">
@@ -153,12 +153,12 @@
   <dialog id="library">
     <form method="dialog">
       <div class="save">
-        <input id="saveName" maxlength="24" placeholder="short name for the current code" autocomplete="off" spellcheck="false">
+        <input id="saveName" maxlength="24" placeholder="short name for this session" autocomplete="off" spellcheck="false">
         <button type="button" id="saveBtn" class="go">♡ Save</button>
         <button value="close">Close</button>
       </div>
       <ul id="savedList"></ul>
-      <p class="hint">Saved in this browser only (localStorage). Saving under an existing name replaces it.</p>
+      <p class="hint">Each save keeps the code and the whole conversation; loading one lets you carry on where you left off. Saved in <span class="where">this browser</span> only. Saving under an existing name replaces it.</p>
     </form>
   </dialog>
   <textarea id="code" spellcheck="false" placeholder="// generated SuperCollider code appears here — edit freely"></textarea>
@@ -190,6 +190,8 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const status = (t) => ($('status').textContent = t);
+// The page runs in the desktop app or in a browser (npm start); say where things are saved.
+if (/Electron/.test(navigator.userAgent)) document.querySelectorAll('.where').forEach((e) => (e.textContent = 'this app'));
 const store = {
   get: () => { try { return localStorage.getItem('anthropic-key') || ''; } catch { return ''; } },
   set: (v) => { try { v ? localStorage.setItem('anthropic-key', v) : localStorage.removeItem('anthropic-key'); } catch {} },
@@ -267,13 +269,15 @@ $('historyBtn').onclick = () => {
         <span>${new Date(t.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
         <details><summary>code · ${t.code.split('\n').length} lines${t.code.trim() === current ? ' · <span class="current">in editor</span>' : ''}</summary>
           <pre>${esc(t.code)}</pre></details>
-        <button type="button" data-restore="${i}" title="Put this version back in the editor. The conversation continues from it.">Restore</button>
+        ${i < turns.length - 1 ? `<button type="button" data-rewind="${i}" title="Go back to this version. Claude's context goes back too: the later turns are dropped.">Rewind here</button>` : ''}
       </div>
     </li>`).join('');
   $('turns').onclick = (e) => {
-    const b = e.target.closest('button[data-restore]'); if (!b) return;
-    const t = turns[+b.dataset.restore];
-    $('code').value = t.code; status('restored — Run to hear it'); $('history').close();
+    const b = e.target.closest('button[data-rewind]'); if (!b) return;
+    const i = +b.dataset.rewind, later = turns.length - 1 - i;
+    if (!confirm(`Rewind to this turn? The ${later} later turn${later === 1 ? '' : 's'} will be dropped, so Claude continues from here with only the context up to this point. Save first (♡) to keep them.`)) return;
+    turns = turns.slice(0, i + 1); chat.save(turns); renderChat();
+    $('code').value = turns[i].code; status('rewound — Run to hear it'); $('history').close();
   };
   $('history').showModal();
   $('turns').scrollTop = $('turns').scrollHeight; // newest at the bottom, like a chat
@@ -314,20 +318,25 @@ addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); stop(); }
 });
 
-// --- saved code (localStorage) --------------------------------------------
+// --- saved sessions (localStorage) -----------------------------------------
+// A save is the whole session: the editor's code and the conversation that led to it. Loading one
+// brings both back, so the next prompt continues with Claude seeing everything up to the save.
+// Saves from before conversations existed have no turns; they load with a fresh conversation.
 const lib = {
   load: () => { try { return JSON.parse(localStorage.getItem('saved-patches') || '[]'); } catch { return []; } },
   save: (list) => { try { localStorage.setItem('saved-patches', JSON.stringify(list)); return true; } catch { return false; } },
 };
 const esc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-// default name: first few words of the prompt, since that's what you'll remember it by
-const suggestName = () => ($('prompt').value.trim().split(/\s+/).slice(0, 4).join(' ') || '').slice(0, 24);
+// default name: first few words of the first prompt, since that's what you'll remember it by
+const suggestName = () => ((turns[0]?.prompt || $('prompt').value).trim().split(/\s+/).slice(0, 4).join(' ') || '').slice(0, 24);
+const nTurns = (n) => `${n} turn${n === 1 ? '' : 's'}`;
 
 function renderLibrary() {
   const list = lib.load().sort((a, b) => b.savedAt - a.savedAt);
   $('savedList').innerHTML = list.length ? list.map((p, i) => `
-    <li title="${esc(p.prompt || '')}">
+    <li title="${esc(p.turns?.length ? p.turns.map((t) => '• ' + t.prompt).join('\n') : p.prompt || '')}">
       <span class="name">${esc(p.name)}</span>
+      <span class="when">${p.turns?.length ? nTurns(p.turns.length) : 'code only'}</span>
       <span class="when">${new Date(p.savedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
       <button type="button" data-load="${i}">Load</button>
       <button type="button" data-del="${i}">✕</button>
@@ -337,8 +346,11 @@ function renderLibrary() {
     const all = lib.load().sort((a, c) => c.savedAt - a.savedAt);
     if (b.dataset.load != null) {
       const p = all[+b.dataset.load];
-      if ($('code').value.trim() && $('code').value !== p.code && !confirm(`Replace the editor with "${p.name}"?`)) return;
-      $('code').value = p.code; status(`loaded "${p.name}"`); $('library').close();
+      const busy = turns.length || ($('code').value.trim() && $('code').value !== p.code);
+      if (busy && !confirm(`Load "${p.name}"? It replaces the editor${turns.length ? ` and the current ${nTurns(turns.length)} conversation` : ''}. Save first (♡) to keep them.`)) return;
+      $('code').value = p.code;
+      turns = structuredClone(p.turns || []); chat.save(turns); renderChat();
+      status(`loaded "${p.name}"${turns.length ? ` · ${nTurns(turns.length)}` : ''}`); $('library').close();
     } else if (b.dataset.del != null) {
       const p = all[+b.dataset.del];
       if (!confirm(`Delete "${p.name}"?`)) return;
@@ -351,8 +363,8 @@ function saveCurrent() {
   if (!code) { $('saveName').placeholder = 'nothing in the editor to save'; return; }
   if (!name) { $('saveName').focus(); return; }
   const list = lib.load().filter((p) => p.name !== name); // same name replaces
-  list.push({ name, code: $('code').value, prompt: $('prompt').value.trim(), savedAt: Date.now() });
-  if (!lib.save(list)) { log('! Could not save: browser storage is unavailable or full.\n'); return; }
+  list.push({ name, code: $('code').value, prompt: $('prompt').value.trim(), turns, savedAt: Date.now() });
+  if (!lib.save(list)) { log('! Could not save: storage is unavailable or full.\n'); return; }
   $('saveName').value = ''; status(`saved "${name}"`); renderLibrary();
 }
 $('heart').onclick = () => { $('saveName').value = suggestName(); renderLibrary(); $('library').showModal(); $('saveName').select(); };
