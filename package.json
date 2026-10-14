@@ -5,7 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --env-file-if-exists=.env server.js",
-    "app": "electron .",
+    "app": "sh build/dev-name.sh && electron .",
     "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir",
     "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip"
   },

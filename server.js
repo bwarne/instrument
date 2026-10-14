@@ -24,15 +24,16 @@ Rules:
 - To send MIDI, use the pre-made port ~midi (the UI shows a MIDI tile; never create MIDIClient or MIDIOut yourself): Pbind(\\type, \\midi, \\midiout, ~midi, \\midinote, Pseq([...]), \\dur, 0.25, \\amp, 0.6) wrapped in Pdef(\\name, ...).play, or ~midi.noteOn(chan, note, vel) / ~midi.noteOff(chan, note) / ~midi.control(chan, cc, value) inside a Routine. MIDI alone makes no sound, so pair it with a SynthDef pattern when the user wants to hear it.
 - When the code plays chords (always when the user asks for chords, a progression or harmony), annotate each chord with a // comment giving its name, its notes and its role in the key, e.g. // Am7: A C E G (ii in G major), next to where it is defined. For a progression, also add a one-line comment above it naming the key and the progression in Roman numerals.
 - Whenever notes are written as numbers in an array, put a // comment on the same line naming each note in order, so the numbers can be read as music. MIDI note numbers (\\midinote, .midicps): absolute names with octave, where 60 = C4, e.g. Pseq([60, 63, 67, 70]) // C4 Eb4 G4 Bb4. Scale degrees (\\degree with \\scale, \\root, \\octave): the notes they produce in that key, e.g. Pseq([0, 2, 4]) // C E G (degrees 1 3 5 of C major). Semitone offsets added to a root: the notes for that root, e.g. [0, 4, 7] // C E G on root C. Spell sharps or flats to suit the key, and use "rest" for \\rest or Rest().
-- Use current SuperCollider (3.14) names, not deprecated ones that print warnings: Pdup, not Pstutter.
+- Use current SuperCollider (3.14) names, not deprecated ones that print warnings: Pdup, not Pstutter. This includes code from earlier turns.
 - Keep output safe: end every signal chain with a limiter or modest amp (<= 0.3) and never produce DC or runaway feedback.
 - This is a conversation about one piece of code that you and the user refine together. Every reply is the complete current code (never a fragment or diff), because it replaces the editor. Keep what earlier turns built unless the user asks to change it.
 - The user may edit the code between turns. When a message includes the current code, that is the latest version: build on it, including their edits.`;
 
-const ANALYZE_SYSTEM = `You help someone learning SuperCollider understand why their code failed.
+const ANALYZE_SYSTEM = `You help someone learning SuperCollider understand why their code failed or printed a warning.
 You get the sclang code that was run (line numbers match sclang's) and the sclang output it produced.
 Do NOT rewrite the code. Explain what is wrong:
 - Start with one plain sentence naming the root cause. The first ERROR is usually it; later ones often cascade, so say so if they do.
+- If there are only WARNINGs, the code ran: say what the warning means and whether it changes the sound (e.g. a deprecated name that still works, a missing SynthDef that silences a voice).
 - Then 1-3 short sentences on why it happens in SuperCollider terms (what the language or server is doing), citing the line number and the offending expression.
 - End with a line starting "Try:" giving the smallest change to make, described in words or a tiny inline snippet.
 Plain text only: no markdown headings, bullets or code fences. Keep it under 120 words.`;
@@ -62,7 +63,7 @@ function summarizeUsage(u, model) {
 // Conversation turns sent back to Claude; older ones are dropped to bound the cost of each request.
 const HISTORY_TURNS = 20;
 
-const stripFences =(t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '').trim();
+const stripFences = (t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '').trim();
 
 // Key comes from the page's settings (per request, never stored); .env is only a fallback.
 // Speed settings from the page's ⚙ dialog. Effort trades depth of reasoning for speed: low answers
@@ -216,9 +217,9 @@ export async function start({
     scEval(`("${file}").load;`);
   }
 
-  // The slice of sclang output worth showing Claude: from just before the first ERROR, capped.
+  // The slice of sclang output worth showing Claude: from just before the first ERROR or WARNING, capped.
   function errorContext() {
-    const i = sinceRun.search(/ERROR|FAILURE/);
+    const i = sinceRun.search(/ERROR|FAILURE|WARNING/);
     if (i < 0) return null;
     return sinceRun.slice(Math.max(0, i - 300), i + 4000).trim();
   }
