@@ -24,7 +24,7 @@ async function findSclang() {
 }
 // ⤴ Share posts the code (and the last take) here and gets a public link back; see share/.
 // Override with SHARE_URL in .env to point at your own deployment.
-const SHARE_URL = (process.env.SHARE_URL || 'https://aninstrument-share.jonowar.workers.dev').replace(/\/+$/, '');
+const SHARE_URL = (process.env.SHARE_URL || 'https://aninstrument-share.peter-clark.workers.dev').replace(/\/+$/, '');
 const MAX_SHARE_CODE = 256 * 1024;   // the share service's own caps, so we fail before uploading
 const MAX_SHARE_AUDIO = 20 * 1024 * 1024;
 

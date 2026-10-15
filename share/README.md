@@ -17,32 +17,61 @@ anyone           ──GET  /s/<id>─────▶  Worker  ──▶  the sh
 
 | Method | Path | What it does |
 |---|---|---|
-| POST | `/api/share` | multipart: `code`, and optionally `title`, `audio` (MP3), `seconds`, `notes`, `parts`, `app`. Returns `{ id, url, token, expiresAt }`. |
+| POST | `/api/share` | multipart: `code`, and optionally `title`, `audio` (MP3), `notes`, `parts`, `app`. Returns `{ id, url, token, expiresAt }`. A `seconds` field is accepted and ignored: the duration is measured from the audio. |
 | DELETE | `/api/share/:id` | Removes the share. Needs the `x-share-token` header with the token from the POST. |
 | GET | `/s/:id` | The share page: player, code, copy and `.scd` download, link preview tags. |
 | GET | `/s/:id.scd` | The code wrapped in `s.waitForBoot { … }`, so it runs in SuperCollider on its own. |
 | GET | `/a/:id.mp3` | The audio, with `Range` support so the player can seek. |
 | GET | `/robots.txt` | Disallows everything: shares are unlisted, not published. |
 
-## Limits
+## Validation
 
-Uploads are open to every copy of the app, so the endpoint assumes bad input:
+Uploads are open to every copy of the app, so nothing that arrives is trusted.
 
-- 256 KB of code, 20 MB of audio (about 8 minutes of the app's 320 kbps MP3), checked against
-  `content-length` before the body is read.
-- The audio must start with an ID3 tag or an MPEG frame sync, and is always served back as
-  `audio/mpeg` with `nosniff`, whatever was uploaded.
-- 5 shares per minute per IP, via the `SHARE_LIMIT` rate limit binding. `cf-connecting-ip` is set
-  by Cloudflare at the edge, so a client can't pick its own bucket.
-- `x-aninstrument: 1` is required. `multipart/form-data` needs no CORS preflight, so without this a
-  page on another origin could post here in a visitor's name; a custom header can't be set
-  cross-origin without a preflight, which this Worker never grants.
-- Shares expire after 90 days. Reads return 410 after that; see below for deleting the objects.
-- The page escapes every interpolation and runs under a CSP that allows only its own nonced script.
+**Size.** 256 KB of code and 20 MB of audio. The body is capped by the bytes that actually arrive,
+not by `content-length`: that header can be wrong, or absent on a chunked request, and
+`formData()` would otherwise buffer whatever was sent. The stream is piped through a counter that
+errors past the cap, so the request is refused mid-upload.
+
+**Audio.** The MPEG frame chain is walked from the start: every frame header has to be valid and
+has to point at the next one, at least 10 frames have to parse, and no more than 4 KB of the file
+may be left unaccounted for (room for an ID3v1 tag). A two-byte sniff would have accepted 20 MB of
+anything behind an `0xFFFB`, which would make this file hosting for arbitrary payloads. The
+duration shown on the page is computed from those frames, so the `seconds` the client sends is
+irrelevant. Audio is always served back as `audio/mpeg` with `nosniff`, whatever was uploaded.
+
+**Text.** Every field is length capped, NFC normalised, and stripped of control characters and of
+the invisible and bidi-override characters that let a title render as something other than what it
+is. A field that should be text can't be a file, and `audio` can't be text. Part keys must match
+`(pdef|ndef):name`.
+
+**Rate.** 5 uploads a minute per IP (`SHARE_LIMIT`), plus `SHARE_FLOOD` as a backstop for one
+source spread across many addresses. Note that rate limit counters are per Cloudflare location,
+not global, so the backstop slows a distributed flood rather than stopping it.
+
+`cf-connecting-ip` is safe to key on: Cloudflare rejects a request whose client tried to set it,
+with its own 403 and error 1000. That is also why the full test suite can only run locally.
+
+**Origin.** `x-aninstrument: 1` is required. `multipart/form-data` needs no CORS preflight, so
+without it a page on another origin could post here in a visitor's name; a custom header can't be
+set cross-origin without a preflight, which this Worker never grants.
+
+**Output.** The page escapes every interpolation and runs under a CSP that allows only its own
+nonced script. Shares expire after 90 days; reads return 410 after that, and the lifecycle rule
+below deletes the objects.
+
+### What this does not do
+
+It does not prove a request came from the app. `x-aninstrument` ships in a public DMG, so anyone
+who looks can replay it; it stops drive-by abuse from a web page, not a determined uploader. The
+validation above bounds what can be stored and served, but an open endpoint is still an open
+endpoint. See "If it gets abused" below.
 
 An id is 60 bits of randomness and there is no listing endpoint, so a share is unlisted rather than
-secret. Treat it like a Google Doc "anyone with the link" share, and say so in the UI (the app
-does).
+secret. Treat it like a "anyone with the link" share, and say so in the UI (the app does).
+
+The share page also warns the reader that the code is someone else's and that SuperCollider can run
+shell commands, because `.scd` downloads are the obvious social-engineering route here.
 
 ## Deploy
 
@@ -53,13 +82,15 @@ npx wrangler r2 bucket create aninstrument-shares   # once, if it doesn't exist 
 npm run deploy
 ```
 
-Then point the app at it, in `.env` at the repo root:
+The live one is `https://aninstrument-share.peter-clark.workers.dev`, which is what `server.js`
+uses by default. To point the app somewhere else, set this in `.env` at the repo root:
 
 ```
 SHARE_URL=https://aninstrument-share.<your-subdomain>.workers.dev
 ```
 
-`server.js` has the deployed URL as its default, so this is only needed for your own deployment.
+`server.js` reads it once, when it is first imported, so `.env` has to be in place before the app
+starts. For a local Worker use `SHARE_URL=http://127.0.0.1:8787` alongside `npm run dev`.
 
 ### Expiry
 
@@ -75,15 +106,23 @@ Without it, reads still 410 on time and nothing is served, but storage grows.
 
 ## Test
 
-The tests run over HTTP against a local Worker with local R2, so they need no account:
-
 ```sh
-npm run dev     # one terminal
-npm test        # another
+npm run dev     # one terminal: local Worker, local R2, no Cloudflare account needed
+npm test        # another: 18 tests
 ```
 
-Point them at a deployment with `SHARE_TEST_URL=https://… npm test`. They create real shares, so
-prefer the local server.
+`npm test` is local only. Each case needs its own `cf-connecting-ip` to keep the per-IP rate limits
+from bleeding between tests, and Cloudflare refuses a client-set one at the edge.
+
+For a deployment:
+
+```sh
+npm run smoke                              # the live service
+SHARE_TEST_URL=https://… npm run smoke     # somewhere else
+```
+
+The smoke tests stay inside the 5-uploads-a-minute budget and delete the shares they create. If you
+run them twice in quick succession, the second run will hit the limit; wait a minute.
 
 ## If it gets abused
 

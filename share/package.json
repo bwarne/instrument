@@ -8,7 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/share.test.js",
+    "smoke": "node --test test/smoke.test.js"
   },
   "devDependencies": {
     "wrangler": "^4.151.0"

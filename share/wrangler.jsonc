@@ -17,6 +17,14 @@
       "name": "SHARE_LIMIT",
       "namespace_id": "7421",
       "simple": { "limit": 5, "period": 60 }
+    },
+    // A backstop for one source spread over many addresses, which the per-IP limit can't see.
+    // Counted per Cloudflare location, not globally, so it slows a flood rather than stopping it;
+    // Turnstile or a sign-in is what actually fixes an open endpoint (see README.md).
+    {
+      "name": "SHARE_FLOOD",
+      "namespace_id": "7422",
+      "simple": { "limit": 60, "period": 60 }
     }
   ]
 }
