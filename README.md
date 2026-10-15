@@ -20,7 +20,7 @@ by GitHub Pages; `docs/og.png` is the preview image.
 - **Run / Stop** (⌘↵ / ⌘.) against a local `sclang` + `scsynth`.
 - **Live coding**: **● Live** re-runs the code a moment after you stop typing (once brackets balance). Each `Pdef`/`Ndef`
   appears in the **parts strip** as a toggle (lit while playing; click to mute or unmute, and mutes survive re-runs). A muted part keeps running
-  silently, so it comes back in on the beat.
+  silently, so it comes back in on the beat. **Mute all** / **Unmute all** do every part at once.
   Deleting or commenting out a part stops it on the next run; **⌘;** comments or uncomments the selected lines.
 - **Oscilloscope** of the master output, triggered on a rising zero crossing, with **L/R level meters**
   (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.

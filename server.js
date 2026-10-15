@@ -690,6 +690,11 @@ export async function start({
         scEval(`~partsSet.value('${key}', ${on ? 'true' : 'false'});`);
         return json(res, 200, { ok: true });
       }
+      if (req.method === 'POST' && req.url === '/parts-all') { // Mute all / Unmute all: { on }
+        const { on } = await readBody(req);
+        scEval(`~partsSetAll.value(${on ? 'true' : 'false'});`);
+        return json(res, 200, { ok: true });
+      }
       if (req.method === 'POST' && req.url === '/restart-audio') {
         audio = { ...audio, running: false, device: null };
         bootLog = '';

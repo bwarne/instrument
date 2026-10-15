@@ -5,6 +5,7 @@
 //                        (deleted or commented out), and re-mutes parts muted in the app, in case
 //                        your code's .play started them afresh
 //   ~partsSet.(key, on)  the app's toggle: off = mute, on = unmute (or play, if it isn't playing)
+//   ~partsSetAll.(on)    Mute all (false) / Unmute all (true)
 // Muting keeps a part running silently, so it comes back in time when unmuted: a Pdef's player turns
 // its events into rests (EventStreamPlayer's muteCount), and an Ndef's monitor volume goes to 0.
 // A key is a Symbol like 'pdef:drums' or 'ndef:pad'.
@@ -80,6 +81,20 @@ var last;
     } {
         ~partsMuted.add(key);
         ~partsMute.(key, true);
+    };
+    ~partsReport.(true);
+};
+
+// The strip's Mute all / Unmute all: mutes every playing part, or unmutes every muted one (stopped parts
+// stay stopped either way)
+~partsSetAll = { |on|
+    ~partsAll.value.do { |p|
+        var k = ~partsKey.(p[0], p[1]);
+        if(on) {
+            if(~partsMuted.includes(k)) { ~partsMuted.remove(k); ~partsMute.(k, false) };
+        } {
+            if(p[2]) { ~partsMuted.add(k); ~partsMute.(k, true) };
+        };
     };
     ~partsReport.(true);
 };

@@ -224,6 +224,7 @@
   .parts { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
   .parts button { padding:2px 9px; font-size:12px; border-radius:11px; }
   #liveBtn.on { border-color:#f66; color:#f88; }
+  #muteAll:disabled, #unmuteAll:disabled { opacity:.35; cursor:default; border-color:#444; }
   #partsList { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .part { color:var(--dim); }
   .part.playing { color:#0d1415; background:var(--accent); border-color:var(--accent); }
@@ -317,6 +318,8 @@
   </div>
   <div class="parts">
     <button id="liveBtn" title="Live: re-run the code by itself about a second after you stop typing (when the brackets balance). Errors from live edits aren't sent to Claude unless you press Explain in the error panel.">○ Live</button>
+    <button id="muteAll" hidden title="Mute every playing part. They keep running silently, so Unmute all brings them back in on the beat.">🔇 Mute all</button>
+    <button id="unmuteAll" hidden title="Bring every muted part back in, on the beat">🔊 Unmute all</button>
     <span id="partsList" class="hint">parts: each Pdef or Ndef in your code shows up here as a toggle once it has run</span>
   </div>
 </div>
@@ -1168,6 +1171,9 @@ function renderParts() {
   const inCode = new Set(activeParts($('code').value));
   // parts in the code, plus anything still sounding that the code no longer has (stops on next run)
   const shown = parts.filter((p) => inCode.has(partKey(p)) || p.playing);
+  $('muteAll').hidden = $('unmuteAll').hidden = !shown.length;
+  $('muteAll').disabled = !parts.some((p) => p.playing && !p.muted);
+  $('unmuteAll').disabled = !parts.some((p) => p.muted);
   if (!shown.length) {
     $('partsList').className = 'hint';
     $('partsList').textContent = 'parts: each Pdef or Ndef in your code shows up here as a toggle once it has run';
@@ -1183,6 +1189,8 @@ function renderParts() {
     return `<button class="part ${state}${orphan ? ' orphan' : ''}" data-key="${esc(partKey(p))}" data-on="${p.muted || !p.playing}" title="${esc(`${p.kind === 'pdef' ? 'Pdef' : 'Ndef'} \\${p.name} · ${tip}`)}"><span class="k">${p.kind === 'pdef' ? 'P' : 'N'}</span>${esc(p.name)}</button>`;
   }).join('');
 }
+$('muteAll').onclick = guard(() => post('/parts-all', { on: false }));
+$('unmuteAll').onclick = guard(() => post('/parts-all', { on: true }));
 $('partsList').onclick = async (e) => {
   const b = e.target.closest('button.part'); if (!b) return;
   try { await post('/part', { key: b.dataset.key, on: b.dataset.on === 'true' }); }
