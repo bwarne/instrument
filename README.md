@@ -37,7 +37,9 @@ by GitHub Pages; `docs/og.png` is the preview image.
   Press it again to cancel the fade.
 - **⬇ Export / ⬆ Import .scd**: export saves the code as a file that runs in SuperCollider by itself (wrapped in
   `s.waitForBoot`); import opens a `.scd` file into the editor, taking that wrapper off again.
-- **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
+- **Error tile**: when a run errors or warns, Claude explains why (without rewriting your code); **Fix** asks for a
+  corrected version. With **auto-fix** ticked, the fix is applied and run straight away, at most twice per Run,
+  and never over code you've edited since. Live-mode edits are only explained when you press Explain.
 - **🎛 Gear**: which real instruments (synths, drum machines, pedals) could play the current sound, which part each
   covers, how to dial it in, estimated new/used prices, suggested rigs, and Sweetwater/Reverb search links.
 - **Cost and tokens** for each request, with a running session total. **🧾 Usage** keeps the history of every
@@ -46,6 +48,7 @@ by GitHub Pages; `docs/og.png` is the preview image.
 - **Speed settings** in ⚙: effort (low by default, for quick replies) and model (Haiku 5.5 for speed, Opus 5.5 for depth).
 - **♡ Saved**: save the whole session (code and conversation) under a short name; loading it carries on with
   Claude seeing everything up to the save. Stored in localStorage. Each launch starts a new conversation.
+  While you work on a saved session, exports (.scd, WAV, MP3, MIDI) are named after it, plus the date and time.
 
 ## Requirements
 

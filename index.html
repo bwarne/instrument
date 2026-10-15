@@ -446,7 +446,7 @@
   <section id="errTile" hidden>
     <header>
       <span id="errKind">sclang error</span>
-      <label title="On: Claude explains each error or warning from a Run as soon as it appears (a small API call each time). Off: nothing is sent until you press Explain. Live-mode edits are never sent automatically."><input type="checkbox" id="autoAnalyze" checked> auto-explain</label>
+      <label title="On: after Claude explains an error or warning, it also fixes the code and runs it again, up to twice per Run (each try is a Claude call). Off: press Fix yourself. Skipped if you've edited the code since that Run, and for live-mode edits."><input type="checkbox" id="autoFix"> auto-fix</label>
       <button id="fixBtn" class="go" hidden title="Ask Claude to rewrite the code that was run, based on this analysis">Fix</button>
       <button id="reanalyze" title="Ask Claude what went wrong and how to fix it">Explain</button>
       <button id="dismiss" title="Hide">✕</button>
@@ -590,6 +590,20 @@ const chat = {
   save: (t) => { try { sessionStorage.setItem('conversation', JSON.stringify(t)); } catch {} },
 };
 let turns = chat.load();
+// The saved session (♡) being worked on, if any: set by saving or loading one, cleared by New. Exports
+// are named after it. Kept beside the conversation, so it lasts until the app quits.
+const session = {
+  get: () => { try { return sessionStorage.getItem('session-name') || ''; } catch { return ''; } },
+  set: (n) => { try { n ? sessionStorage.setItem('session-name', n) : sessionStorage.removeItem('session-name'); } catch {} },
+};
+// A file name for an export: "<saved session> 2026-10-14 22.58.<ext>" when working on one (at = when the
+// thing was made), else null so the caller keeps its own name.
+function sessionFileName(ext, at = Date.now()) {
+  const name = session.get().replace(/[\/\\:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!name) return null;
+  const d = new Date(at), p2 = (n) => String(n).padStart(2, '0');
+  return `${name} ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}.${p2(d.getMinutes())}.${ext}`;
+}
 function renderChat() {
   $('historyBtn').hidden = !turns.length;
   $('historyBtn').textContent = `💬 ${turns.length} turn${turns.length === 1 ? '' : 's'}`;
@@ -652,7 +666,7 @@ $('newChat').onclick = () => {
   const lost = [turns.length && `the ${nTurns(turns.length)} conversation`, $('code').value.trim() && 'the code in the editor']
     .filter(Boolean).join(' and ');
   if (lost && !confirm(`Start something new? This clears ${lost}. Save first (♡) to keep them. Anything playing keeps playing until Stop.`)) return;
-  turns = []; chat.save(turns); renderChat();
+  turns = []; chat.save(turns); renderChat(); session.set('');
   $('code').value = ''; $('prompt').value = ''; hideTile();
   status('new conversation'); $('prompt').focus();
 };
@@ -660,9 +674,10 @@ renderChat();
 // Every run sends the parts the code mentions outside comments; the server stops all the others,
 // so deleting or commenting out a Pdef/Ndef silences it.
 let liveRunning = false; // the latest run came from live mode, not the Run button
-async function sendRun(isLive) {
+async function sendRun(isLive, fromAutoFix = false) {
   hideTile();
   watchForError = true; liveRunning = isLive;
+  if (!fromAutoFix) autoFixLeft = AUTO_FIX_TRIES; // each Run of yours gets fresh tries
   errLine = 0; renderGutter();
   lastRunCode = $('code').value;
   await post('/run', { code: lastRunCode, keep: activeParts(lastRunCode) });
@@ -799,7 +814,7 @@ function renderLibrary() {
       const busy = turns.length || ($('code').value.trim() && $('code').value !== p.code);
       if (busy && !confirm(`Load "${p.name}"? It replaces the editor${turns.length ? ` and the current ${nTurns(turns.length)} conversation` : ''}. Save first (♡) to keep them.`)) return;
       $('code').value = p.code;
-      turns = structuredClone(p.turns || []); chat.save(turns); renderChat();
+      turns = structuredClone(p.turns || []); chat.save(turns); renderChat(); session.set(p.name);
       status(`loaded "${p.name}"${turns.length ? ` · ${nTurns(turns.length)}` : ''}`); $('library').close();
     } else if (b.dataset.del != null) {
       const p = all[+b.dataset.del];
@@ -815,6 +830,7 @@ function saveCurrent() {
   const list = lib.load().filter((p) => p.name !== name); // same name replaces
   list.push({ name, code: $('code').value, prompt: $('prompt').value.trim(), turns, savedAt: Date.now() });
   if (!lib.save(list)) { log('! Could not save: storage is unavailable or full.\n'); return; }
+  session.set(name);
   $('saveName').value = ''; status(`saved "${name}"`); renderLibrary();
 }
 $('heart').onclick = () => { $('saveName').value = suggestName(); renderLibrary(); $('library').showModal(); $('saveName').select(); };
@@ -880,16 +896,18 @@ function openTake() {
   if (!$('takeDlg').open) $('takeDlg').showModal();
 }
 $('takeBtn').onclick = openTake;
-const download = (href) => { const a = document.createElement('a'); a.href = href; a.download = ''; document.body.append(a); a.click(); a.remove(); };
-$('takeWav').onclick = () => download(`/take/${rec.take.id}.wav`);
+// name: the saved file's name ('' keeps the server's, "AnInstrument <date time>.<ext>")
+const download = (href, name = '') => { const a = document.createElement('a'); a.href = href; a.download = name; document.body.append(a); a.click(); a.remove(); };
+const takeFile = (id, ext) => download(`/take/${id}.${ext}`, sessionFileName(ext, Number(id)) || '');
+$('takeWav').onclick = () => takeFile(rec.take.id, 'wav');
 const MID_TITLE = $('takeMid').title;
-$('takeMid').onclick = () => download(`/take/${rec.take.id}.mid`);
+$('takeMid').onclick = () => takeFile(rec.take.id, 'mid');
 $('takeMp3').onclick = async () => {
   const b = $('takeMp3'), id = rec.take.id;
   b.disabled = true; b.textContent = 'Making MP3…';
   try {
     await post('/take-mp3', { id });
-    download(`/take/${id}.mp3`);
+    takeFile(id, 'mp3');
   } catch (e) {
     $('takeNote').className = 'hint err'; $('takeNote').textContent = e.message;
   } finally { b.disabled = false; b.textContent = 'Save MP3'; }
@@ -937,7 +955,8 @@ function exportScd() {
   const text = `${lines.join('\n')}\n(\ns.waitForBoot {\n${code}\n};\n)\n`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-  a.download = (suggestName() || 'instrument').replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.scd';
+  a.download = sessionFileName('scd')
+    || (suggestName() || 'instrument').replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.scd';
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   status('exported ' + a.download);
@@ -1318,12 +1337,12 @@ function showTile(text, pending) {
   $('errBody').textContent = text;
   $('errBody').classList.toggle('pending', !!pending);
 }
-const auto = {
-  get: () => { try { return localStorage.getItem('auto-analyze') !== '0'; } catch { return true; } },
-  set: (v) => { try { localStorage.setItem('auto-analyze', v ? '1' : '0'); } catch {} },
-};
-$('autoAnalyze').checked = auto.get();
-$('autoAnalyze').onchange = (e) => auto.set(e.target.checked);
+// Errors and warnings from a Run are always explained. Auto-fix (off by default) goes on to Fix and run
+// again, at most AUTO_FIX_TRIES times per Run, so a fix that keeps failing can't loop.
+const AUTO_FIX_TRIES = 2;
+let autoFixLeft = 0;
+$('autoFix').checked = pref('auto-fix', '0') === '1';
+$('autoFix').onchange = (e) => setPref('auto-fix', e.target.checked ? '1' : '0');
 function onRunIssue(kind) {
   if (runIssue === kind || runIssue === 'error') return; // only escalate, warning -> error
   runIssue = kind;
@@ -1331,7 +1350,6 @@ function onRunIssue(kind) {
   $('errTile').classList.toggle('warn', kind === 'warning');
   const what = kind === 'error' ? 'an error' : 'a warning';
   clearTimeout(errTimer);
-  if (!auto.get()) { showTile(`Run produced ${what}. Press Explain to ask Claude about it, or tick auto-explain to have every one explained.`); return; }
   if (liveRunning) { showTile(`A live edit produced ${what}. Not sent to Claude while you type; press Explain to ask.`); return; }
   showTile(`${what} in sclang output…`, true);
   // let sclang finish printing (an error dump, or an error after the warning), then analyze once
@@ -1352,24 +1370,38 @@ async function analyze() {
     if (analysis) { lastAnalysis = analysis; $('fixBtn').hidden = false; }
   } catch (e) {
     showTile(e.message);
+    if (['no_key', 'bad_key', 'no_credit'].includes(e.code)) openConnect(e.code);
+    return;
+  }
+  if (lastAnalysis && $('autoFix').checked && !liveRunning) {
+    if ($('code').value !== lastRunCode) $('errBody').textContent += "\n\n(Not auto-fixed: you've edited the code since that Run. Press Fix to use this anyway.)";
+    else if (autoFixLeft <= 0) $('errBody').textContent += `\n\n(Auto-fix tried ${AUTO_FIX_TRIES} times on this Run; over to you.)`;
+    else { autoFixLeft--; await fix(true); }
   }
 }
 $('reanalyze').onclick = analyze;
-$('fixBtn').onclick = guard(async () => {
+// isAuto: from auto-fix, which then runs the fixed code (a manual Fix leaves it for you to review)
+async function fix(isAuto) {
   if (!lastAnalysis) return;
-  if ($('code').value !== lastRunCode && !confirm('The editor has changed since that Run. Replace it with the fixed version of the code that was run?')) return;
+  if (!isAuto && $('code').value !== lastRunCode && !confirm('The editor has changed since that Run. Replace it with the fixed version of the code that was run?')) return;
   const analysis = lastAnalysis, what = runIssue === 'warning' ? 'ran but printed a warning' : 'failed to run';
-  $('fixBtn').disabled = true; status('fixing…');
+  $('fixBtn').disabled = true; status(isAuto ? 'fixing… (auto-fix)' : 'fixing…');
   try {
     const { truncated } = await converse(
       `Fix: this code ${what}. Here is an analysis of the sclang output:\n\n${analysis}\n\nFix the code based on this analysis. Return the full corrected code.`,
       'fix', lastRunCode);
     hideTile();
-    status(truncated ? 'cut off!' : 'fixed — review, then Run');
+    if (truncated) { status('cut off!'); return; }
+    if (isAuto) { await sendRun(false, true); status('fixed and running again (auto-fix)'); }
+    else status('fixed — review, then Run');
+  } catch (e) {
+    status(''); log('! ' + e.message + '\n');
+    if (['no_key', 'bad_key', 'no_credit'].includes(e.code)) openConnect(e.code);
   } finally {
     $('fixBtn').disabled = false;
   }
-});
+}
+$('fixBtn').onclick = () => fix(false);
 $('dismiss').onclick = hideTile;
 const ws = new WebSocket(`ws://${location.host}`);
 ws.binaryType = 'arraybuffer';
