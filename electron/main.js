@@ -1,22 +1,22 @@
 // Desktop app: starts the same server as `npm start` (sclang, scsynth, Claude calls) inside Electron
 // and shows the page in its own window. Run with `npm run app`.
-import { app, BrowserWindow, Menu, MenuItem, dialog, shell, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, MenuItem, dialog, shell } from 'electron';
 import updater from 'electron-updater';
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 // Keep the data folder from before the app was renamed to "AnInstrument": it holds the page's
-// localStorage (saved code, conversation), settings.json and the API key, and npm start uses it too.
+// localStorage (API key, saved code, conversation) and settings.json, and npm start uses it too.
 app.setPath('userData', join(app.getPath('appData'), 'Instrument'));
 // .env is a fallback for ANTHROPIC_API_KEY, MODEL, MIDI_PORT etc. (the ⚙ setting is the usual route)
 for (const dir of [root, app.getPath('userData')]) {
   if (existsSync(join(dir, '.env'))) process.loadEnvFile(join(dir, '.env'));
 }
 
-// A fixed port keeps the page's origin stable, and the page keeps its saved code and settings in
+// A fixed port keeps the page's origin stable, and the page keeps its API key and saved code in
 // localStorage, which is per-origin. A random port would lose them on every launch.
 const PORT = Number(process.env.INSTRUMENT_PORT) || 47800;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -26,22 +26,6 @@ if (!app.requestSingleInstanceLock()) app.exit(0);
 
 let server = null;
 let win = null;
-
-// The Anthropic API key, encrypted with safeStorage, whose key lives in the macOS Keychain (under
-// "AnInstrument Safe Storage"). The file alone is useless on another Mac or to another app. The dev
-// build (npm run app) is signed differently, so macOS may ask before letting it read that entry.
-const keyFile = () => join(app.getPath('userData'), 'api-key.bin');
-const keyStore = {
-  get() {
-    if (!existsSync(keyFile()) || !safeStorage.isEncryptionAvailable()) return null;
-    try { return safeStorage.decryptString(readFileSync(keyFile())); } catch { return null; }
-  },
-  set(key) {
-    if (!key) return rmSync(keyFile(), { force: true });
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("The Keychain isn't available, so the key can't be saved");
-    writeFileSync(keyFile(), safeStorage.encryptString(key), { mode: 0o600 });
-  },
-};
 
 async function createWindow() {
   win = new BrowserWindow({
@@ -110,7 +94,7 @@ app.whenReady().then(async () => {
   if (!app.isPackaged) app.dock?.setIcon(join(root, 'build', 'icon.png'));
   const { start } = await import('../server.js');
   try {
-    server = await start({ port: PORT, dataDir: app.getPath('userData'), keyStore });
+    server = await start({ port: PORT, dataDir: app.getPath('userData') });
   } catch (e) {
     dialog.showErrorBox('AnInstrument could not start',
       e.code === 'EADDRINUSE'

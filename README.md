@@ -92,10 +92,9 @@ npm start          # then open http://127.0.0.1:3000
 ```
 
 Wait about 10 seconds for scsynth to boot. On first launch, **Connect to Claude** walks you through creating an
-API key in the Claude Console and pasting it; the key is checked straight away (a free request). The app keeps it
-in the macOS Keychain (Electron `safeStorage`, in `api-key.bin` in the data folder), and the page never holds
-it. In a browser (`npm start`) there's no Keychain, so the page keeps it in localStorage and sends it to the
-local server with each request. ⚙ shows which key is connected and can change or remove it. A missing,
+API key in the Claude Console and pasting it; the key is checked straight away (a free request). It's stored on
+this machine only (in the app's or browser's local storage) and sent to the local server with each request.
+⚙ Settings shows which key is connected and can change or remove it. A missing,
 rejected or out-of-credit key reopens Connect at the step that fixes it. Alternatively copy `.env.example` to
 `.env`; the packaged app also reads `~/Library/Application Support/Instrument/.env`.
 

@@ -365,7 +365,6 @@ export async function start({
   port = 3000,
   log = (d) => process.stdout.write(d),
   dataDir = join(homedir(), 'Library', 'Application Support', 'Instrument'),
-  keyStore = null, // { get() → key or null, set(key or null) }: the app's Keychain-backed store, if any
 } = {}) {
   const settingsFile = join(dataDir, 'settings.json');
   let settings = {};
@@ -626,10 +625,9 @@ export async function start({
     for await (const c of req) b += c;
     return b ? JSON.parse(b) : {};
   };
-  // The key for a Claude call: the page's own (browser mode keeps it in localStorage), else the saved one;
-  // with neither, ask() falls back to .env.
-  const storedKey = () => { try { return keyStore?.get() || null; } catch { return null; } };
-  const keyFor = (req) => req.headers['x-api-key'] || storedKey() || undefined;
+  // The key for a Claude call: the page keeps it (in localStorage) and sends it with each request; without
+  // one, ask() falls back to .env.
+  const keyFor = (req) => req.headers['x-api-key'] || undefined;
   const json = (res, code, obj) => {
     res.writeHead(code, { 'content-type': 'application/json' });
     res.end(JSON.stringify(obj));
@@ -662,15 +660,12 @@ export async function start({
       if (req.method === 'POST' && req.url === '/gear') {
         return json(res, 200, await gear(keyFor(req), await readBody(req)));
       }
-      if (req.method === 'GET' && req.url === '/key') { // what the ⚙ and setup screens show
-        const k = storedKey();
-        return json(res, 200, { store: keyStore ? 'keychain' : null, saved: !!k, hint: k ? keyHint(k) : null, env: !!envKey() });
+      if (req.method === 'GET' && req.url === '/key') { // whether .env has a key, for the ⚙ and Connect screens
+        return json(res, 200, { env: !!envKey() });
       }
-      if (req.method === 'POST' && req.url === '/key') { // { key } checks it (and saves it, with a store); { key: null } removes it
-        const { key, check = true } = await readBody(req);
-        if (key == null) { keyStore?.set(null); return json(res, 200, { ok: true }); }
-        const result = check ? await checkKey(key) : { ok: typeof key === 'string' && key.startsWith('sk-ant-') };
-        if (result.ok && keyStore) keyStore.set(key.trim());
+      if (req.method === 'POST' && req.url === '/key') { // { key }: checks a key before the page keeps it
+        const { key } = await readBody(req);
+        const result = await checkKey(key);
         return json(res, 200, { ...result, hint: result.ok ? keyHint(key.trim()) : null });
       }
       if (req.method === 'GET' && req.url === '/usage') { // the 🧾 usage history
