@@ -989,8 +989,9 @@ function renderMarks() {
 let errLine = 0;
 function renderGutter() {
   const ta = $('code'), cur = ta.value.slice(0, ta.selectionStart).split('\n').length;
+  // exact heights: a line is 13px × 1.55 = 20.15px, and offsetHeight's whole pixels drifted ~3px per 20 lines
   $('gutter').innerHTML = [...$('marks').children].map((d, i) =>
-    `<div style="height:${d.offsetHeight}px"${i + 1 === errLine ? ' class="err"' : i + 1 === cur ? ' class="cur"' : ''}>${i + 1}</div>`).join('')
+    `<div style="height:${d.getBoundingClientRect().height}px"${i + 1 === errLine ? ' class="err"' : i + 1 === cur ? ' class="cur"' : ''}>${i + 1}</div>`).join('')
     + '<div style="height:40px"></div>'; // room to scroll as far as the textarea can
   $('marks').scrollTop = $('gutter').scrollTop = ta.scrollTop;
 }
