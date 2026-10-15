@@ -51,7 +51,8 @@ by GitHub Pages; `docs/og.png` is the preview image.
   (set `SCLANG` to use another path). Without it, the app shows setup steps and a **Check again** button, and starts
   SuperCollider as soon as it's found.
 - Node 22+
-- An Anthropic API key from console.anthropic.com
+- An Anthropic API key from the [Claude Console](https://platform.claude.com/settings/keys) (the app walks you
+  through it). Claude subscriptions (Pro/Max) can't be used: Anthropic only allows those in its own apps.
 
 ## Run
 
@@ -85,9 +86,13 @@ Or in a browser:
 npm start          # then open http://127.0.0.1:3000
 ```
 
-Wait about 10 seconds for scsynth to boot. Click ⚙ and paste your API key. It is stored on this machine only
-(in the app's or browser's local storage) and sent to the local server per request. Alternatively copy
-`.env.example` to `.env`; the packaged app also reads `~/Library/Application Support/Instrument/.env`.
+Wait about 10 seconds for scsynth to boot. On first launch, **Connect to Claude** walks you through creating an
+API key in the Claude Console and pasting it; the key is checked straight away (a free request). The app keeps it
+in the macOS Keychain (Electron `safeStorage`, in `api-key.bin` in the data folder), and the page never holds
+it. In a browser (`npm start`) there's no Keychain, so the page keeps it in localStorage and sends it to the
+local server with each request. ⚙ shows which key is connected and can change or remove it. A missing,
+rejected or out-of-credit key reopens Connect at the step that fixes it. Alternatively copy `.env.example` to
+`.env`; the packaged app also reads `~/Library/Application Support/Instrument/.env`.
 
 Run one at a time: the app and `npm start` both start scsynth and use the same UDP port. Closing the app's
 window quits it and shuts down sclang and scsynth.

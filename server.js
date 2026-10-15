@@ -126,13 +126,35 @@ const stripFences = (t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '')
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const pickModel = (m) => (m && (m in PRICES || m === MODEL) ? m : MODEL);
 
+// --- the API key ---
+// .env's ANTHROPIC_API_KEY, unless it's the placeholder from .env.example
+const envKey = () => { const k = process.env.ANTHROPIC_API_KEY; return k && !k.endsWith('...') ? k : null; };
+const keyHint = (k) => `${k.slice(0, 7)}…${k.slice(-4)}`; // enough to recognise a key without revealing it
+// An Error with a code the page acts on: no_key, bad_key, no_credit
+const coded = (message, code) => Object.assign(new Error(message), { code });
+
+// Checks a key with a free request (listing models). Credit isn't checked: that only shows on a real call.
+export async function checkKey(key) {
+  if (typeof key !== 'string' || !/^sk-ant-[\w-]{20,}$/.test(key.trim())) {
+    return { ok: false, error: "That doesn't look like an Anthropic API key. They start with sk-ant-." };
+  }
+  try {
+    await new Anthropic({ apiKey: key.trim(), maxRetries: 1, timeout: 15000 }).models.list({ limit: 1 });
+    return { ok: true };
+  } catch (e) {
+    if (e.status === 401) return { ok: false, error: 'Anthropic rejected this key. Copy it again from the Console (it is only shown once, when created).' };
+    if (e.status === 403) return { ok: false, error: "This key isn't allowed to use the API. Check its workspace in the Console." };
+    return { ok: false, error: `Couldn't check the key: ${e.message}` };
+  }
+}
+
 // `content` is a single user message, or a full messages array for a conversation.
 // `format` is a JSON schema the reply must follow (structured output).
 // `kind` names the feature for the usage history (generate, fix, analysis, gear).
 async function ask(apiKey, system, content, maxTokens, { model, effort, format, kind = 'other' } = {}) {
   model = pickModel(model);
-  const key = apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!key || key.endsWith('...')) throw new Error('No API key: click ⚙ and paste your Anthropic API key');
+  const key = apiKey || envKey();
+  if (!key) throw coded('No API key yet: connect your Anthropic account under ⚙', 'no_key');
   const client = new Anthropic({ apiKey: key });
   const messages = Array.isArray(content) ? content : [{ role: 'user', content }];
   const output_config = {
@@ -162,8 +184,9 @@ async function ask(apiKey, system, content, maxTokens, { model, effort, format, 
   } catch (e) {
     if (e.status === 401) {
       const source = apiKey ? 'the ⚙ setting' : '.env';
-      throw new Error(`401 invalid key from ${source}: ${key.slice(0, 10)}…${key.slice(-4)} (${key.length} chars)`);
+      throw coded(`Anthropic rejected the API key from ${source} (${keyHint(key)}). It may have been deleted or mistyped: connect again under ⚙.`, 'bad_key');
     }
+    if (/credit balance/i.test(e.message)) throw coded('Your Anthropic account is out of credit. Add some in the Claude Console (Settings → Billing), then try again.', 'no_credit');
     throw e;
   }
 }
@@ -342,6 +365,7 @@ export async function start({
   port = 3000,
   log = (d) => process.stdout.write(d),
   dataDir = join(homedir(), 'Library', 'Application Support', 'Instrument'),
+  keyStore = null, // { get() → key or null, set(key or null) }: the app's Keychain-backed store, if any
 } = {}) {
   const settingsFile = join(dataDir, 'settings.json');
   let settings = {};
@@ -602,6 +626,10 @@ export async function start({
     for await (const c of req) b += c;
     return b ? JSON.parse(b) : {};
   };
+  // The key for a Claude call: the page's own (browser mode keeps it in localStorage), else the saved one;
+  // with neither, ask() falls back to .env.
+  const storedKey = () => { try { return keyStore?.get() || null; } catch { return null; } };
+  const keyFor = (req) => req.headers['x-api-key'] || storedKey() || undefined;
   const json = (res, code, obj) => {
     res.writeHead(code, { 'content-type': 'application/json' });
     res.end(JSON.stringify(obj));
@@ -626,13 +654,24 @@ export async function start({
       }
       if (req.method === 'POST' && req.url === '/generate') {
         const { prompt, code, history, model, effort, kind } = await readBody(req);
-        return json(res, 200, await generate(prompt, code, history, req.headers['x-api-key'], { model, effort, kind }));
+        return json(res, 200, await generate(prompt, code, history, keyFor(req), { model, effort, kind }));
       }
       if (req.method === 'POST' && req.url === '/analyze') {
-        return json(res, 200, await analyze(req.headers['x-api-key'], await readBody(req)));
+        return json(res, 200, await analyze(keyFor(req), await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/gear') {
-        return json(res, 200, await gear(req.headers['x-api-key'], await readBody(req)));
+        return json(res, 200, await gear(keyFor(req), await readBody(req)));
+      }
+      if (req.method === 'GET' && req.url === '/key') { // what the ⚙ and setup screens show
+        const k = storedKey();
+        return json(res, 200, { store: keyStore ? 'keychain' : null, saved: !!k, hint: k ? keyHint(k) : null, env: !!envKey() });
+      }
+      if (req.method === 'POST' && req.url === '/key') { // { key } checks it (and saves it, with a store); { key: null } removes it
+        const { key, check = true } = await readBody(req);
+        if (key == null) { keyStore?.set(null); return json(res, 200, { ok: true }); }
+        const result = check ? await checkKey(key) : { ok: typeof key === 'string' && key.startsWith('sk-ant-') };
+        if (result.ok && keyStore) keyStore.set(key.trim());
+        return json(res, 200, { ...result, hint: result.ok ? keyHint(key.trim()) : null });
       }
       if (req.method === 'GET' && req.url === '/usage') { // the 🧾 usage history
         let text = '';
@@ -705,7 +744,7 @@ export async function start({
       }
       json(res, 404, { error: 'not found' });
     } catch (e) {
-      json(res, 500, { error: e.message });
+      json(res, 500, { error: e.message, code: e.code });
     }
   });
 

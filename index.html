@@ -204,6 +204,21 @@
   #takeDlg .head { display:flex; gap:10px; align-items:baseline; margin-bottom:12px; }
   #takeDlg .takeRow { margin-bottom:4px; }
   #takeNote.err { color:var(--err); }
+  /* connecting to Claude: the first-run dialog and the ⚙ key row */
+  #connect { width:min(520px,92vw); font:15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+  #connect h2 { margin:4px 0 6px; font-size:20px; }
+  #connect .lead { color:#bbb; margin:0 0 6px; }
+  #connect .steps { padding-left:1.3em; margin:10px 0 16px; } #connect .steps li { margin:0 0 14px; }
+  #connect .steps div { margin-top:6px; }
+  #connect .btn { display:inline-block; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:4px 10px; text-decoration:none; font-size:13px; }
+  #connect .btn:hover { background:#7fd1; }
+  #connect input { font:13px ui-monospace, Menlo, monospace; }
+  #connectMsg { margin-top:6px; min-height:1.4em; } #connectMsg.ok { color:var(--accent); } #connectMsg.err { color:var(--err); }
+  #connect .credit.hl { background:#3a3517; border-radius:6px; padding:6px 8px; margin-left:-8px; }
+  #connectDone:disabled { opacity:.4; cursor:default; }
+  .keyRow { display:flex; gap:8px; align-items:center; } .keyRow > span { flex:1; }
+  .keyRow button { padding:3px 10px; font-size:12px; }
+  #keyState.ok { color:var(--accent); } #keyState.none { color:var(--err); }
   #takeDlg button:disabled { opacity:.4; cursor:default; border-color:#444; }
   /* parts strip: one toggle per Pdef/Ndef */
   .parts { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
@@ -341,12 +356,27 @@
       <ol id="turns"></ol>
     </form>
   </dialog>
+  <dialog id="connect">
+    <form method="dialog">
+      <h2>Connect to Claude</h2>
+      <p class="lead">AnInstrument uses your own Anthropic API key, so you only pay Anthropic for what you use: usually a cent or two per request, and every request shows its cost.</p>
+      <ol class="steps">
+        <li><b>Create a key.</b> Sign in to the Claude Console (or sign up), click <i>Create Key</i>, and copy it.
+          <div><a class="btn" id="consoleKeys" target="_blank" rel="noopener">Open the Claude Console ↗</a></div></li>
+        <li><b>Paste it here.</b> It's checked straight away, then <span id="connectWhere">kept in this browser</span>.
+          <input id="connectKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+          <div id="connectMsg" class="hint"></div></li>
+        <li class="credit"><b>Add credit</b> if the account is new: the API is prepaid, and $5 goes a long way.
+          <div><a class="btn" id="consoleBilling" target="_blank" rel="noopener">Billing ↗</a></div></li>
+      </ol>
+      <div class="row"><button value="done" class="go" id="connectDone" disabled>Done</button><button value="later">Later</button></div>
+    </form>
+  </dialog>
   <dialog id="settings">
     <form method="dialog">
-      <label>Anthropic API key<br>
-        <input id="key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
-      </label>
-      <p class="hint">Stored in <span class="where">this browser</span> only and sent to your local server with each request. Leave empty to use ANTHROPIC_API_KEY from .env.</p>
+      <div class="keyRow"><span><b>Claude</b> <span id="keyState"></span></span>
+        <button type="button" id="keyChange">Connect…</button><button type="button" id="keyRemove" hidden>Remove</button></div>
+      <p class="hint" id="keyWhere"></p>
       <div class="row speed">
         <label>Effort<br>
           <select id="effort">
@@ -365,7 +395,7 @@
         </label>
       </div>
       <p class="hint">Lower effort means less thinking before writing, so replies come back sooner. Error explanations always use low effort.</p>
-      <div class="row"><button value="save" class="go">Save</button><button value="clear">Clear</button><button value="cancel">Cancel</button></div>
+      <div class="row"><button value="save" class="go">Save</button><button value="cancel">Cancel</button></div>
     </form>
   </dialog>
   <dialog id="library">
@@ -469,10 +499,16 @@ const post = async (path, body) => {
   if (store.get()) headers['x-api-key'] = store.get();
   const r = await fetch(path, { method:'POST', headers, body:JSON.stringify(body) });
   const j = await r.json();
-  if (!r.ok) throw new Error(j.error);
+  if (!r.ok) throw Object.assign(new Error(j.error), { code: j.code });
   return j;
 };
-const guard = (fn) => async () => { try { await fn(); } catch (e) { status(''); log('! ' + e.message + '\n'); } };
+// A missing, rejected or out-of-credit key opens the Connect dialog at the step that fixes it.
+const guard = (fn) => async () => {
+  try { await fn(); } catch (e) {
+    status(''); log('! ' + e.message + '\n');
+    if (['no_key', 'bad_key', 'no_credit'].includes(e.code)) openConnect(e.code);
+  }
+};
 
 // --- usage line under the prompt: tokens, cost, time, running total for this page load ---
 let sessionCost = 0, sessionKnown = true;
@@ -628,19 +664,83 @@ const run = guard(() => sendRun(false));
 const stop = guard(async () => { midiAllOff(); await post('/stop', {}); status('stopped'); });
 
 $('cog').onclick = () => {
-  $('key').value = store.get();
+  renderKey();
   $('effort').value = pref('effort', 'low'); $('model').value = pref('model', '');
   $('settings').returnValue = ''; // Esc or a click outside closes without saving or clearing
   $('settings').showModal();
 };
 $('settings').addEventListener('close', () => {
   const v = $('settings').returnValue;
-  if (v === 'save') { store.set($('key').value.trim()); setPref('effort', $('effort').value); setPref('model', $('model').value); }
-  if (v === 'clear') store.set('');
-  $('key').value = '';
-  if (!store.get()) status('no key set');
+  if (v === 'save') { setPref('effort', $('effort').value); setPref('model', $('model').value); }
 });
-if (!store.get()) status('no key set');
+
+// --- connecting to Claude: the API key --------------------------------------------------------------
+// The app keeps the key in the macOS Keychain, through the server (GET/POST /key), and the page never
+// holds it. In a browser (npm start) there's no Keychain, so the page keeps it in localStorage and sends
+// it with each request. ANTHROPIC_API_KEY in .env still works as a fallback.
+const CONSOLE = 'https://platform.claude.com'; // the Claude Console (console.anthropic.com redirects here)
+$('consoleKeys').href = CONSOLE + '/settings/keys';
+$('consoleBilling').href = CONSOLE + '/settings/billing';
+let key = { store: null, saved: false, hint: null, env: false };
+const hasKey = () => key.saved || !!store.get() || key.env;
+async function loadKey() {
+  try { key = await (await fetch('/key')).json(); } catch {}
+  // a key from before the Keychain moves there (unchecked: it was working)
+  if (key.store && store.get()) {
+    try { const r = await post('/key', { key: store.get(), check: false }); if (r.ok) { store.set(''); key = { ...key, saved: true, hint: r.hint }; } } catch {}
+  }
+}
+function renderKey() {
+  const local = store.get(), saved = key.saved || !!local;
+  const hint = key.saved ? key.hint : local ? `${local.slice(0, 7)}…${local.slice(-4)}` : null;
+  $('keyState').className = saved || key.env ? 'ok' : 'none';
+  $('keyState').textContent = saved ? `connected · ${hint}` : key.env ? 'connected · key from .env' : 'not connected';
+  $('keyChange').textContent = saved ? 'Change key…' : 'Connect…';
+  $('keyRemove').hidden = !saved;
+  $('keyWhere').textContent = saved ? (key.store ? "The key is kept in your Mac's Keychain." : 'The key is kept in this browser.')
+    : key.env ? 'Using ANTHROPIC_API_KEY from .env. Connect a key here to use that instead.' : 'Connect to use Claude.';
+}
+// why: welcome (first run), no_key, bad_key or no_credit (the credit step is highlighted)
+function openConnect(why = 'welcome') {
+  $('connectWhere').textContent = key.store ? "saved in your Mac's Keychain" : 'kept in this browser';
+  $('connectKey').value = '';
+  const msg = { bad_key: ['err', 'The saved key stopped working (deleted or mistyped?). Paste a new one.'],
+    no_credit: ['err', 'The key works, but the account is out of credit: add some under Billing.'] }[why] || ['', ''];
+  $('connectMsg').className = 'hint ' + msg[0]; $('connectMsg').textContent = msg[1];
+  $('connect').querySelector('.credit').classList.toggle('hl', why === 'no_credit');
+  $('connectDone').disabled = why !== 'no_credit';
+  if ($('settings').open) $('settings').close();
+  if (!$('connect').open) $('connect').showModal();
+  if (why !== 'no_credit') $('connectKey').focus();
+}
+let checking = 0;
+async function checkPasted() {
+  const k = $('connectKey').value.trim(), n = ++checking;
+  $('connectDone').disabled = true;
+  if (!k) { $('connectMsg').className = 'hint'; $('connectMsg').textContent = ''; return; }
+  if (!k.startsWith('sk-ant-') || k.length < 30) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = 'Anthropic API keys start with sk-ant-. Copy the whole key.'; return; }
+  $('connectMsg').className = 'hint'; $('connectMsg').textContent = 'Checking the key…';
+  try {
+    const r = await post('/key', { key: k });
+    if (n !== checking) return; // a newer paste is being checked
+    if (!r.ok) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = r.error; return; }
+    if (key.store) key = { ...key, saved: true, hint: r.hint }; else store.set(k);
+    $('connectMsg').className = 'hint ok';
+    $('connectMsg').textContent = `✓ Connected (${r.hint}). ${key.store ? 'Saved in your Keychain.' : 'Saved in this browser.'}`;
+    $('connectDone').disabled = false; $('connectDone').focus();
+    status('');
+  } catch (e) { if (n === checking) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = e.message; } }
+}
+let pasteTimer;
+$('connectKey').addEventListener('input', () => { clearTimeout(pasteTimer); pasteTimer = setTimeout(checkPasted, 400); });
+$('keyChange').onclick = () => openConnect();
+$('keyRemove').onclick = async () => {
+  if (!confirm('Disconnect? The key is removed from this app (it still exists in the Claude Console).')) return;
+  store.set('');
+  if (key.store) { try { await post('/key', { key: null }); } catch {} key = { ...key, saved: false, hint: null }; }
+  renderKey(); status('no key set');
+};
+$('connect').addEventListener('close', () => { if (!hasKey()) status('no key set'); });
 // A click on the backdrop (outside the dialog's box, so the event lands on the <dialog> itself) closes it,
 // like Close. Both press and release must be outside, so a text selection dragged out of a dialog doesn't.
 for (const d of document.querySelectorAll('dialog')) {
@@ -1136,8 +1236,9 @@ $('code').addEventListener('keydown', (e) => {
 });
 
 // --- setup screen: shown instead of the app until SuperCollider is installed ------
-fetch('/status').then((r) => r.json()).then((st) => {
-  if (st.supercollider) return;
+const keyLoaded = loadKey();
+fetch('/status').then((r) => r.json()).then(async (st) => {
+  if (st.supercollider) { await keyLoaded; if (!hasKey()) openConnect(); return; } // setup first, then connect
   $('setupPaths').textContent = 'AnInstrument looks for it in: ' + st.paths.map((p) => p.replace(/\/Contents\/MacOS\/sclang$/, '')).join(', ');
   $('setup').hidden = false;
 }).catch(() => {});
