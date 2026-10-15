@@ -196,6 +196,37 @@ test('strips invisible and direction-flipping characters from a title', async ()
 });
 
 
+test('previews as a track, with no image', async () => {
+  const res = await share({
+    code: '// a track\n'.repeat(40),
+    title: 'wub',
+    notes: 5092,
+    parts: 'pdef:kick,pdef:bass,ndef:pad',
+    audio: realMp3(40),
+  });
+  assert.equal(res.status, 201);
+  const { id } = await res.json();
+  const html = await (await fetch(`${BASE}/s/${id}`)).text();
+  const tag = (prop) => (html.match(new RegExp(`<meta (?:property|name)="${prop}" content="([^"]*)"`)) || [, null])[1];
+
+  assert.equal(tag('og:title'), 'wub', 'the title is the track name on its own');
+  assert.equal(tag('og:site_name'), 'AnInstrument');
+  assert.equal(tag('og:type'), 'music.song');
+  assert.equal(tag('og:description'), '0:01 · 3 parts · 5,092 notes · live-coded in SuperCollider');
+  assert.equal(tag('og:image'), null, 'no image');
+  assert.equal(tag('twitter:card'), 'summary', 'the card type that works without one');
+  assert.ok(html.includes('rel="apple-touch-icon"'), 'iOS has an icon for the compact row');
+  assert.ok(html.includes('property="og:audio"'), 'still declares the audio');
+});
+
+test('previews a code-only share by its length', async () => {
+  const res = await share({ code: 'var a = 1;\n'.repeat(1200), title: 'just code' });
+  const { id } = await res.json();
+  const html = await (await fetch(`${BASE}/s/${id}`)).text();
+  const desc = (html.match(/<meta property="og:description" content="([^"]*)"/) || [, ''])[1];
+  assert.match(desc, /^1,201 lines of code · live-coded in SuperCollider$/, desc);
+});
+
 test('tells the reader the code is not theirs', async () => {
   const res = await share({ code: 'unixCmd("echo hi");' });
   const { id } = await res.json();

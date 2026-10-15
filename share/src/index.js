@@ -38,7 +38,7 @@ const TTL_DAYS = 90;
 
 const SITE = 'https://jonowar.github.io/instrument/';
 const DOWNLOAD = 'https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm64.dmg';
-const OG_IMAGE = 'https://jonowar.github.io/instrument/og.png';
+const ICON = 'https://jonowar.github.io/instrument/icon.png'; // the compact preview's icon on iOS
 
 // No l/o/0/1, so an id read off a screen can't be mistyped. 12 chars of 32 is 60 bits.
 const ID_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
@@ -175,6 +175,9 @@ const scdName = (title, id) => {
 // runs no JavaScript) still sees the title, and the page works with scripting turned off.
 function page(meta, id, url, nonce) {
   const title = meta.title || 'An AnInstrument sketch';
+  // The canonical address, not whatever query string the link was opened with: og:url is what a
+  // crawler treats as the identity of the page, and it should not echo back a tracking parameter.
+  const canonical = new URL(`/s/${id}`, url).href;
   const when = new Date(meta.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const facts = [when];
   if (meta.audio && meta.seconds > 0) facts.push(mmss(meta.seconds));
@@ -183,8 +186,18 @@ function page(meta, id, url, nonce) {
 
   const lines = meta.code.split('\n');
   const nums = lines.map((_, i) => i + 1).join('\n');
-  const desc = `${meta.audio && meta.seconds > 0 ? mmss(meta.seconds) + ' of SuperCollider' : 'SuperCollider code'}`
-    + ` made with AnInstrument${meta.parts?.length ? `: ${meta.parts.slice(0, 6).join(', ')}` : ''}.`;
+
+  // The preview line. Reads as track metadata rather than a sentence, because that is what a
+  // shared link is: duration first, then what is in it. Shown under the title by iMessage, Slack
+  // and Discord, so it carries the whole preview now that there is no image.
+  const group = (x) => String(x).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const bits = [];
+  if (meta.audio && meta.seconds > 0) bits.push(mmss(meta.seconds));
+  else bits.push(`${group(lines.length)} line${lines.length === 1 ? '' : 's'} of code`);
+  if (meta.parts?.length) bits.push(`${meta.parts.length} part${meta.parts.length === 1 ? '' : 's'}`);
+  if (meta.notes > 0) bits.push(`${group(meta.notes)} notes`);
+  bits.push('live-coded in SuperCollider');
+  const desc = bits.join(' · ');
 
   return `<!doctype html>
 <html lang="en">
@@ -198,14 +211,17 @@ function page(meta, id, url, nonce) {
 <meta property="og:site_name" content="AnInstrument">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
-<meta property="og:url" content="${esc(url)}">
-<meta property="og:image" content="${OG_IMAGE}">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta name="twitter:card" content="summary_large_image">
-${meta.audio ? `<meta property="og:audio" content="${esc(new URL(`/a/${id}.mp3`, url).href)}">
+<meta property="og:url" content="${esc(canonical)}">
+<!-- No og:image on purpose. The app screenshot said nothing about the track, and without an image
+     iMessage falls back to its compact row: icon, title, then the line above. That reads like a
+     track rather than like an article, which is the point. twitter:card has to be "summary", the
+     one card type that works with no image. -->
+<meta name="twitter:card" content="summary">
+${meta.audio ? `<meta property="og:audio" content="${esc(new URL(`/a/${id}.mp3`, canonical).href)}">
 <meta property="og:audio:type" content="audio/mpeg">` : ''}
-<link rel="icon" href="https://jonowar.github.io/instrument/icon.png">
+<link rel="canonical" href="${esc(canonical)}">
+<link rel="icon" href="${ICON}">
+<link rel="apple-touch-icon" href="${ICON}">
 <style>
   /* color-scheme makes the browser draw the native audio controls and scrollbars dark, instead of
      a white player sitting in the middle of a dark page */
@@ -402,8 +418,13 @@ async function createShare(env, request, url) {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
   const perIp = await env.SHARE_LIMIT.limit({ key: `share:${ip}` });
   if (!perIp.success) return json({ error: 'Too many shares from here just now. Wait a minute and try again.' }, 429);
-  const overall = await env.SHARE_FLOOD.limit({ key: 'all' });
-  if (!overall.success) return json({ error: 'The share service is busy. Try again in a minute.' }, 429);
+  // The flood limiter counts every upload against one bucket, which a test run exhausts in a
+  // couple of passes. .dev.vars turns it off for `wrangler dev` only: that file is never uploaded
+  // by `wrangler deploy`, so a deployment always has it on.
+  if (env.SHARE_FLOOD_OFF !== '1') {
+    const overall = await env.SHARE_FLOOD.limit({ key: 'all' });
+    if (!overall.success) return json({ error: 'The share service is busy. Try again in a minute.' }, 429);
+  }
 
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_BODY) return json({ error: 'That share is too big.' }, 413);
