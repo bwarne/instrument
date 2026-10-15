@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aninstrument-share",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-15",
+  "observability": { "enabled": true },
+
+  // Audio and code both live here: s/<id>.json and s/<id>.mp3.
+  "r2_buckets": [{ "binding": "SHARES", "bucket_name": "aninstrument-shares" }],
+
+  // Uploads are open to every copy of the app, so cap them per IP. The period can only be 10 or
+  // 60 seconds, so this is a burst limit, not a daily quota; the 90-day expiry and the size caps
+  // are what keep the bucket bounded. namespace_id is account-wide: don't reuse it elsewhere or
+  // the counters are shared.
+  "ratelimits": [
+    {
+      "name": "SHARE_LIMIT",
+      "namespace_id": "7421",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ]
+}
