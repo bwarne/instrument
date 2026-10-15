@@ -38,7 +38,9 @@
   #errTile header { display:flex; align-items:center; gap:8px; color:var(--err); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
   #errTile header span { flex:1; }
   #errTile header button { padding:2px 8px; font-size:12px; }
-  #errTile header label { text-transform:none; letter-spacing:0; color:var(--dim); display:flex; gap:4px; align-items:center; }
+  #errTile header label { text-transform:none; letter-spacing:0; color:var(--dim); display:flex; gap:4px; align-items:center; white-space:nowrap; cursor:pointer; }
+  #errTile header label input { width:auto; min-width:0; flex:none; margin:0; }
+  #errKind { white-space:nowrap; }
   #errBody { margin-top:8px; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
              white-space:pre-wrap; color:#eed; }
   #errBody.pending { color:var(--dim); font-style:italic; }
@@ -267,7 +269,7 @@
     <div id="usage"></div>
   </div>
   <div class="parts">
-    <button id="liveBtn" title="Live: re-run the code by itself about a second after you stop typing (when the brackets balance). Errors from live edits aren't sent to Claude unless you press Analyze.">○ Live</button>
+    <button id="liveBtn" title="Live: re-run the code by itself about a second after you stop typing (when the brackets balance). Errors from live edits aren't sent to Claude unless you press Explain in the error panel.">○ Live</button>
     <span id="partsList" class="hint">parts: each Pdef or Ndef in your code shows up here as a toggle once it has run</span>
   </div>
 </div>
@@ -362,9 +364,9 @@
   <section id="errTile" hidden>
     <header>
       <span id="errKind">sclang error</span>
-      <label title="Analyze automatically when a Run produces an error or warning"><input type="checkbox" id="autoAnalyze" checked> auto</label>
+      <label title="On: Claude explains each error or warning from a Run as soon as it appears (a small API call each time). Off: nothing is sent until you press Explain. Live-mode edits are never sent automatically."><input type="checkbox" id="autoAnalyze" checked> auto-explain</label>
       <button id="fixBtn" class="go" hidden title="Ask Claude to rewrite the code that was run, based on this analysis">Fix</button>
-      <button id="reanalyze">Analyze</button>
+      <button id="reanalyze" title="Ask Claude what went wrong and how to fix it">Explain</button>
       <button id="dismiss" title="Hide">✕</button>
     </header>
     <div id="errBody"></div>
@@ -1033,14 +1035,14 @@ function onRunIssue(kind) {
   $('errTile').classList.toggle('warn', kind === 'warning');
   const what = kind === 'error' ? 'an error' : 'a warning';
   clearTimeout(errTimer);
-  if (!auto.get()) { showTile(`Run produced ${what}. Press Analyze to ask Claude about it.`); return; }
-  if (liveRunning) { showTile(`A live edit produced ${what}. Not sent to Claude while you type; press Analyze to ask.`); return; }
+  if (!auto.get()) { showTile(`Run produced ${what}. Press Explain to ask Claude about it, or tick auto-explain to have every one explained.`); return; }
+  if (liveRunning) { showTile(`A live edit produced ${what}. Not sent to Claude while you type; press Explain to ask.`); return; }
   showTile(`${what} in sclang output…`, true);
   // let sclang finish printing (an error dump, or an error after the warning), then analyze once
   errTimer = setTimeout(() => { watchForError = false; analyze(); }, 1500);
 }
 async function analyze() {
-  showTile('analyzing…', true);
+  showTile('Claude is explaining…', true);
   lastAnalysis = ''; $('fixBtn').hidden = true;
   try {
     const t0 = performance.now();

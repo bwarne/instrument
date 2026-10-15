@@ -1,13 +1,13 @@
 {
   "name": "instrument",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "main": "electron/main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node --env-file-if-exists=.env server.js",
     "app": "sh build/dev-name.sh && electron .",
     "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir",
-    "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip --publish never",
+    "release": "APPLE_KEYCHAIN_PROFILE=${APPLE_KEYCHAIN_PROFILE:-instrument-notary} NODE_OPTIONS=--experimental-require-module electron-builder --mac dmg zip --publish never && node build/check-bundle.mjs",
     "publish": "sh build/publish.sh"
   },
   "keywords": [],
@@ -35,7 +35,7 @@
       "electron/**",
       "package.json",
       "!**/node_modules/**/*.{map,d.ts,d.mts,d.cts,md,markdown}",
-      "!**/node_modules/**/{src,docs,test,tests,__tests__,examples}/**"
+      "!**/node_modules/**/{docs,test,tests,__tests__,examples}/**"
     ],
     "asarUnpack": [
       "*.scd"

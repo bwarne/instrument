@@ -14,6 +14,7 @@ ZIP="dist/AnInstrument-$VERSION-arm64-mac.zip"
 FILES="dist/AnInstrument-arm64.dmg $ZIP $ZIP.blockmap dist/latest-mac.yml"
 
 for f in $FILES; do [ -f "$f" ] || { echo "missing $f: run npm run release first"; exit 1; }; done
+node build/check-bundle.mjs || exit 1
 grep -q "^version: $VERSION$" dist/latest-mac.yml || { echo "dist/latest-mac.yml isn't for $VERSION: run npm run release again"; exit 1; }
 [ -z "$(git status --porcelain)" ] || { echo "uncommitted changes: commit first, so the release matches its tag"; exit 1; }
 git fetch -q origin
