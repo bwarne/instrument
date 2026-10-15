@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnInstrument</title>
+<meta name="description" content="Describe a sound. Claude writes the SuperCollider code. You play it live. Free for macOS.">
+<!-- link previews (iMessage, Slack, X…): https://ogp.me -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AnInstrument">
+<meta property="og:title" content="AnInstrument: describe a sound, play it live">
+<meta property="og:description" content="Describe a sound. Claude writes the SuperCollider code. You play it live, record it as WAV, MP3 or MIDI. Free for macOS.">
+<meta property="og:url" content="https://jonowar.github.io/instrument/">
+<meta property="og:image" content="https://jonowar.github.io/instrument/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AnInstrument: a code editor, oscilloscope and piano roll playing a lo-fi groove">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<style>
+  :root { --bg:#0c0f10; --fg:#e8f3f1; --dim:#93a8a5; --accent:#7fd; --panel:#141c1d; --line:#23393b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:17px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; }
+  .glow { position:fixed; inset:-40vh auto auto -30vw; width:90vw; height:90vw; background:radial-gradient(circle, #7fd1 0%, #7fd0 60%); pointer-events:none; }
+  main { position:relative; max-width:1040px; margin:0 auto; padding:64px 16px 48px; }
+  header { display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+  header img { width:96px; height:96px; }
+  h1 { font-size:clamp(40px, 7vw, 60px); letter-spacing:-.02em; margin:0; line-height:1.05; }
+  .tag { font-size:clamp(19px, 2.6vw, 24px); color:#b9cdca; margin:18px 0 28px; max-width:640px; }
+  .tag b { color:var(--accent); font-weight:600; }
+  .cta { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .dl { display:inline-block; background:var(--accent); color:#06201c; font-weight:650; text-decoration:none; padding:14px 26px; border-radius:10px; font-size:18px; }
+  .dl:hover { filter:brightness(1.08); }
+  .note { color:var(--dim); font-size:14px; }
+  .shot { display:block; width:100%; margin:44px 0 40px; border-radius:12px; border:1px solid var(--line); box-shadow:0 30px 80px #000a; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+  .card h3 { margin:0 0 6px; font-size:17px; color:var(--accent); }
+  .card p { margin:0; color:#c5d6d3; font-size:15px; }
+  h2 { font-size:22px; margin:44px 0 12px; }
+  ol { padding-left:1.3em; color:#c5d6d3; } li { margin:6px 0; }
+  a { color:var(--accent); }
+  code { background:var(--panel); padding:1px 6px; border-radius:4px; font-size:14px; }
+  footer { margin-top:48px; color:var(--dim); font-size:14px; }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <h1>AnInstrument</h1>
+  </header>
+  <p class="tag">Describe a sound. <b>Claude</b> writes the SuperCollider code. You play it live, change it, break it, and learn how it works.</p>
+  <div class="cta">
+    <a class="dl" href="https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm64.dmg">Download for Mac</a>
+    <span class="note">Free · Apple silicon · updates itself</span>
+  </div>
+
+  <img class="shot" src="screenshot.png" alt="AnInstrument playing a lo-fi groove: the prompt, the generated code, an oscilloscope and a piano roll">
+
+  <div class="grid">
+    <div class="card"><h3>Prompt to code</h3><p>Ask for a sound in plain words and refine it as a conversation. The code is yours to edit and run.</p></div>
+    <div class="card"><h3>Live coding</h3><p>Each part becomes a toggle. Mute one and it comes back in on the beat. Live mode re-runs as you type.</p></div>
+    <div class="card"><h3>See the sound</h3><p>An oscilloscope, level meters and a piano roll of every note, with chords named in the code.</p></div>
+    <div class="card"><h3>Record it</h3><p>Record a take, fade it out, and save it as WAV, MP3 or MIDI. Export the code as a .scd file.</p></div>
+    <div class="card"><h3>Errors explained</h3><p>When something breaks, Claude explains why, and Fix rewrites it.</p></div>
+    <div class="card"><h3>Gear</h3><p>Which real synths and drum machines could play the sound, with prices and store links.</p></div>
+  </div>
+
+  <h2>Getting started</h2>
+  <ol>
+    <li>Install <a href="https://supercollider.github.io/downloads">SuperCollider</a> (free). AnInstrument uses it to make the sound.</li>
+    <li>Open AnInstrument and add an Anthropic API key from <a href="https://console.anthropic.com">console.anthropic.com</a> under ⚙. Each request shows what it cost.</li>
+    <li>Describe a sound and press Generate.</li>
+  </ol>
+
+  <footer>Open source on <a href="https://github.com/jonowar/instrument">GitHub</a>.</footer>
+</main>
+</body>
+</html>
