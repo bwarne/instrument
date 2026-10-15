@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, appendFile, mkdtemp, mkdir, access } from 'node:fs/promises';
-import { constants } from 'node:fs';
+import { readFile, writeFile, appendFile, mkdtemp, mkdir, access, open, rm, rename, stat } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +33,8 @@ Rules:
 - Use \`s\` for the server. Do not call s.boot, s.quit or s.waitForBoot.
 - Define SynthDefs with .add (not .send) and call s.sync before playing them. Use Pdef/Ndef/Pbind/Routine for patterns.
 - Give every ongoing sound its own named Pdef or Ndef, one per musical part (e.g. Pdef(\\kick), Pdef(\\bass), Ndef(\\pad)), started with .play. Don't play ongoing sound with bare Synth(...), {...}.play or a loose Routine. The app shows each Pdef/Ndef as a toggle, re-runs replace them in place, and commenting one out stops it.
-- To send MIDI, use the pre-made port ~midi (the UI shows a MIDI tile; never create MIDIClient or MIDIOut yourself): Pbind(\\type, \\midi, \\midiout, ~midi, \\midinote, Pseq([...]), \\dur, 0.25, \\amp, 0.6) wrapped in Pdef(\\name, ...).play, or ~midi.noteOn(chan, note, vel) / ~midi.noteOff(chan, note) / ~midi.control(chan, cc, value) inside a Routine. MIDI alone makes no sound, so pair it with a SynthDef pattern when the user wants to hear it.
+- The UI's MIDI tile shows every note played by a pattern (Pbind's default note events) automatically, so play notes, melodies, bass lines, chords and drum hits as Pbind patterns in Pdefs (not Synth(...) in a Routine) and they show up there. Don't add ~midi just to display notes.
+- To send MIDI to a device or DAW (only when the user asks for MIDI), use the pre-made port ~midi (never create MIDIClient or MIDIOut yourself): Pbind(\\type, \\midi, \\midiout, ~midi, \\midinote, Pseq([...]), \\dur, 0.25, \\amp, 0.6) wrapped in Pdef(\\name, ...).play, or ~midi.noteOn(chan, note, vel) / ~midi.noteOff(chan, note) / ~midi.control(chan, cc, value) inside a Routine. MIDI alone makes no sound, so pair it with a SynthDef pattern when the user wants to hear it (add \\midiTap, false to that synth pattern so its notes aren't shown twice).
 - When the code plays chords (always when the user asks for chords, a progression or harmony), annotate each chord with a // comment giving its name, its notes and its role in the key, e.g. // Am7: A C E G (ii in G major), next to where it is defined. For a progression, also add a one-line comment above it naming the key and the progression in Roman numerals.
 - Whenever notes are written as numbers in an array, put a // comment on the same line naming each note in order, so the numbers can be read as music. MIDI note numbers (\\midinote, .midicps): absolute names with octave, where 60 = C4, e.g. Pseq([60, 63, 67, 70]) // C4 Eb4 G4 Bb4. Scale degrees (\\degree with \\scale, \\root, \\octave): the notes they produce in that key, e.g. Pseq([0, 2, 4]) // C E G (degrees 1 3 5 of C major). Semitone offsets added to a root: the notes for that root, e.g. [0, 4, 7] // C E G on root C. Spell sharps or flats to suit the key, and use "rest" for \\rest or Rest().
 - Use current SuperCollider (3.14) names, not deprecated ones that print warnings: Pdup, not Pstutter. This includes code from earlier turns.
@@ -117,9 +118,6 @@ function summarizeUsage(u, model) {
 // every call that comes back, whatever feature made it. Calls made outside start() (tests) aren't recorded.
 let recordUsage = null;
 
-// Conversation turns sent back to Claude; older ones are dropped to bound the cost of each request.
-const HISTORY_TURNS = 20;
-
 const stripFences = (t) => t.replace(/^```\w*\n?/, '').replace(/\n?```\s*$/, '').trim();
 
 // Key comes from the page's settings (per request, never stored); .env is only a fallback.
@@ -175,8 +173,7 @@ async function ask(apiKey, system, content, maxTokens, { model, effort, format, 
 // Claude returned. The page keeps it and sends it back each time; the server stores nothing.
 export async function generate(prompt, currentCode, history, apiKey, opts) {
   const turns = (Array.isArray(history) ? history : [])
-    .filter((t) => typeof t?.user === 'string' && typeof t?.code === 'string')
-    .slice(-HISTORY_TURNS);
+    .filter((t) => typeof t?.user === 'string' && typeof t?.code === 'string'); // all of them, for generate and fix alike
   // Only include the editor's code when Claude hasn't seen it: the first turn, or after the user edited
   // it (or restored or loaded another version) since Claude's last reply.
   const last = turns.at(-1)?.code;
@@ -209,6 +206,134 @@ export async function gear(apiKey, { code, prompts, model, effort } = {}) {
 }
 
 // --- server ---------------------------------------------------------------
+// --- recordings: record.scd writes WAV; MP3s are made from it here (exported for tests) ---
+// The layout of a WAV file's samples, from its fmt and data chunks.
+export async function wavInfo(fh) {
+  const { size } = await fh.stat();
+  const head = Buffer.alloc(Math.min(size, 65536));
+  await fh.read(head, 0, head.length, 0);
+  if (head.toString('latin1', 0, 4) !== 'RIFF' || head.toString('latin1', 8, 12) !== 'WAVE') throw new Error('not a WAV file');
+  let fmt = null;
+  for (let off = 12; off + 8 <= head.length;) {
+    const id = head.toString('latin1', off, off + 4), len = head.readUInt32LE(off + 4);
+    if (id === 'fmt ') {
+      let format = head.readUInt16LE(off + 8);
+      if (format === 0xfffe) format = head.readUInt16LE(off + 32); // WAVE_FORMAT_EXTENSIBLE: the subformat
+      fmt = { format, channels: head.readUInt16LE(off + 10), rate: head.readUInt32LE(off + 12), bits: head.readUInt16LE(off + 22) };
+    } else if (id === 'data' && fmt) {
+      const start = off + 8;
+      // an unfinished file (the app quit mid-take) has no size yet: take everything after the header
+      const bytes = len && start + len <= size ? len : size - start;
+      const frameBytes = fmt.channels * fmt.bits / 8;
+      return { ...fmt, start, frameBytes, frames: Math.floor(bytes / frameBytes) };
+    }
+    off += 8 + len + (len & 1);
+  }
+  throw new Error('no audio in the WAV file');
+}
+
+// Encodes a WAV (16/24/32-bit integer or 32-bit float) as a 320 kbps MP3, a block at a time so the
+// server stays responsive. Writes to a temporary name first, so a half-made MP3 is never served.
+export async function wavToMp3(wavPath, mp3Path) {
+  const { Mp3Encoder } = await import('@breezystack/lamejs');
+  const fh = await open(wavPath);
+  const tmpPath = mp3Path + '.part';
+  const out = await open(tmpPath, 'w');
+  try {
+    const w = await wavInfo(fh);
+    const int = w.format === 1 && [16, 24, 32].includes(w.bits), float = w.format === 3 && w.bits === 32;
+    if (!int && !float) throw new Error(`can't convert this WAV (format ${w.format}, ${w.bits}-bit)`);
+    if (w.rate > 48000) throw new Error(`MP3 only goes up to 48 kHz; this recording is ${w.rate / 1000} kHz. Save the WAV instead.`);
+    const enc = new Mp3Encoder(2, w.rate, 320);
+    const bytesPer = w.bits / 8, BLOCK = 1152 * 64;
+    const buf = Buffer.alloc(BLOCK * w.frameBytes), l = new Int16Array(BLOCK), r = new Int16Array(BLOCK);
+    const sample = (o) => {
+      if (float) return Math.max(-32768, Math.min(32767, Math.round(buf.readFloatLE(o) * 32767)));
+      if (w.bits === 16) return buf.readInt16LE(o);
+      return w.bits === 24 ? buf.readIntLE(o, 3) >> 8 : buf.readInt32LE(o) >> 16;
+    };
+    for (let done = 0; done < w.frames;) {
+      const n = Math.min(BLOCK, w.frames - done);
+      await fh.read(buf, 0, n * w.frameBytes, w.start + done * w.frameBytes);
+      for (let i = 0; i < n; i++) {
+        const o = i * w.frameBytes;
+        l[i] = sample(o);
+        r[i] = w.channels > 1 ? sample(o + bytesPer) : l[i]; // mono plays on both sides
+      }
+      const mp3 = enc.encodeBuffer(l.subarray(0, n), r.subarray(0, n));
+      if (mp3.length) await out.write(mp3);
+      done += n;
+    }
+    const tail = enc.flush();
+    if (tail.length) await out.write(tail);
+  } catch (e) {
+    await out.close(); await rm(tmpPath, { force: true });
+    throw e;
+  } finally {
+    await fh.close();
+  }
+  await out.close();
+  await rename(tmpPath, mp3Path);
+}
+
+// A Standard MIDI File (format 1) of the MIDI heard during a take. events: [{ t (ms into the take), cmd,
+// args }] as relayed from sclang: noteOn [chan, note, vel, instrument?, tempo?], noteOff [chan, note],
+// control [chan, cc, value], program [chan, n], bend [chan, value 0–16383], allNotesOff [chan].
+// Each instrument (or ~midi channel) gets its own track. The file's tempo is the music's, so a DAW's bars
+// line up with its beats (though not with its downbeats, since the take starts wherever it started).
+export function takeToMidi(events, seconds) {
+  const PPQ = 480;
+  const bps = events.find((e) => e.cmd === 'noteOn' && e.args[4] > 0)?.args[4] ?? 2; // 120 bpm if unknown
+  const tick = (ms) => Math.max(0, Math.round((ms / 1000) * bps * PPQ));
+  const end = tick(seconds * 1000);
+  const tracks = new Map(); // key → { name, chan, ev: [[tick, order, bytes]] }
+  const held = new Map(); // `${chan}:${note}` → the track a sounding note was started on
+  const trackFor = (chan, name) => {
+    const key = name ? `i:${name}` : `c:${chan}`;
+    if (!tracks.has(key)) tracks.set(key, { name: name || `~midi channel ${chan + 1}`, chan, ev: [] });
+    return tracks.get(key);
+  };
+  const off = (tr, chan, note, at) => tr.ev.push([at, 0, [0x80 | chan, note, 0]]);
+  for (const { t, cmd, args } of events) {
+    const chan = (args[0] | 0) & 15, at = Math.min(tick(t), end);
+    if (cmd === 'noteOn' && args[2] > 0) {
+      const k = `${chan}:${args[1]}`;
+      if (held.has(k)) off(held.get(k), chan, args[1], at); // a repeat of a sounding note ends it first
+      const tr = trackFor(chan, typeof args[3] === 'string' ? args[3] : null);
+      tr.ev.push([at, 1, [0x90 | chan, args[1] & 127, Math.max(1, args[2] & 127)]]);
+      held.set(k, tr);
+    } else if (cmd === 'noteOff' || cmd === 'noteOn') {
+      const k = `${chan}:${args[1]}`;
+      if (held.has(k)) { off(held.get(k), chan, args[1], at); held.delete(k); }
+    } else if (cmd === 'allNotesOff') {
+      for (const [k, tr] of held) if (+k.split(':')[0] === chan) { off(tr, chan, +k.split(':')[1], at); held.delete(k); }
+    } else if (cmd === 'control') trackFor(chan).ev.push([at, 1, [0xb0 | chan, args[1] & 127, args[2] & 127]]);
+    else if (cmd === 'program') trackFor(chan).ev.push([at, 1, [0xc0 | chan, args[1] & 127]]);
+    else if (cmd === 'bend') trackFor(chan).ev.push([at, 1, [0xe0 | chan, args[1] & 127, (args[1] >> 7) & 127]]);
+  }
+  for (const [k, tr] of held) off(tr, +k.split(':')[0], +k.split(':')[1], end); // still sounding at the end
+
+  const vlq = (n) => { const b = [n & 127]; while ((n >>= 7)) b.unshift((n & 127) | 128); return b; };
+  const text = (type, s) => { const b = [...Buffer.from(s, 'utf8')]; return [0xff, type, ...vlq(b.length), ...b]; };
+  const chunk = (id, bytes) => { const h = Buffer.alloc(8); h.write(id, 'latin1'); h.writeUInt32BE(bytes.length, 4); return Buffer.concat([h, Buffer.from(bytes)]); };
+  const track = (head, ev) => {
+    const out = [0, ...head];
+    let last = 0;
+    // by time; at the same time, note-offs first, so a repeated note ends before it starts again
+    for (const [at, , bytes] of ev.sort((a, b) => a[0] - b[0] || a[1] - b[1])) { out.push(...vlq(at - last), ...bytes); last = at; }
+    out.push(...vlq(Math.max(0, end - last)), 0xff, 0x2f, 0); // end of track, at the end of the take
+    return chunk('MTrk', out);
+  };
+  const usPerBeat = Math.round(1e6 / bps);
+  const header = Buffer.alloc(6);
+  header.writeUInt16BE(1, 0); header.writeUInt16BE(tracks.size + 1, 2); header.writeUInt16BE(PPQ, 4);
+  return Buffer.concat([
+    chunk('MThd', [...header]),
+    track([...text(3, 'AnInstrument'), 0, 0xff, 0x51, 3, usPerBeat >> 16, (usPerBeat >> 8) & 255, usPerBeat & 255], []),
+    ...[...tracks.values()].map((tr) => track(text(3, tr.name), tr.ev)),
+  ]);
+}
+
 // Starts sclang (which boots scsynth) and the HTTP/WebSocket server the page talks to.
 // Returns { port, stop }. Used by `node server.js` and by the Electron app (electron/main.js).
 // dataDir holds settings.json (the chosen output device) and usage.jsonl (every Claude call's tokens and
@@ -284,6 +409,8 @@ export async function start({
     scEval(`("${here('midi.scd')}").load;`);
     // parts.scd tracks Pdefs/Ndefs for the parts strip and stops the ones the code no longer mentions
     scEval(`("${here('parts.scd')}").load;`);
+    // record.scd: the Record button's recorder (~recStart, ~recStop)
+    scEval(`("${here('record.scd')}").load;`);
   }
   const found = await findSclang();
   if (found) launchSclang(found);
@@ -298,7 +425,8 @@ export async function start({
     // Streams are only worth decoding for a connected page; status (/audio, /devices) is kept for
     // the next page that connects, so it must always be read. /devices is only sent when it changes.
     const streaming = address === '/scope' || address === '/levels' || address === '/midi';
-    if (streaming && ![...clients].some((ws) => ws.readyState === 1)) return;
+    const recording = address === '/midi' && rec.state === 'recording'; // MIDI is kept for the take
+    if (streaming && !recording && ![...clients].some((ws) => ws.readyState === 1)) return;
     const tagStart = padded(addrEnd);
     const tagEnd = msg.indexOf(0, tagStart);
     const tags = msg.toString('latin1', tagStart + 1, tagEnd); // typetag is ",fff…" without the comma
@@ -316,6 +444,7 @@ export async function start({
         else if (t === 's') { const e = msg.indexOf(0, off); args.push(msg.toString('utf8', off, e)); off = padded(e); }
         else break; // other types aren't sent by midi.scd
       }
+      if (recording) recMidi.push({ t: Date.now() - rec.startedAt, cmd: args[0], args: args.slice(1) });
       broadcast('midi', { cmd: args[0], args: args.slice(1) });
     } else if (address === '/levels') { // peakL rmsL peakR rmsR
       broadcast('levels', [0, 1, 2, 3].map((i) => msg.readFloatBE(off + i * 4)));
@@ -339,12 +468,89 @@ export async function start({
     } else if (address === '/audio') { // running(int) nominalRate actualRate
       audio = { ...audio, running: msg.readInt32BE(off) === 1, nominal: msg.readFloatBE(off + 4), actual: msg.readFloatBE(off + 8) };
       broadcast('audio', audio);
+    } else if (address === '/record') { // "started"|"finished"|"failed", then a path or a reason
+      const vals = [];
+      for (const t of tags) { if (t !== 's') break; const e = msg.indexOf(0, off); vals.push(msg.toString('utf8', off, e)); off = padded(e); }
+      onRecord(vals[0], vals[1]);
+    } else if (address === '/fade') { // "started" seconds | "done" | "cancelled"
+      const e = msg.indexOf(0, off), what = tags[0] === 's' ? msg.toString('utf8', off, e) : '';
+      if (what === 'started') setFade({ fading: true, seconds: tags[1] === 'f' ? msg.readFloatBE(padded(e)) : 0, startedAt: Date.now() });
+      else setFade({ fading: false, done: what === 'done' });
     }
   });
   udp.bind(SCOPE_PORT, '127.0.0.1');
 
   const tmp = await mkdtemp(join(tmpdir(), 'instrument-'));
   let runCount = 0;
+
+  // --- recording (record.scd) ---
+  // A take is recorded to the temp folder as <id>.wav, the id being its start time; the page then
+  // offers it as a WAV or MP3 download, along with <id>.mid, the MIDI notes heard during it. state: idle | starting | recording | stopping.
+  // take: the last finished one, { id, seconds }. error: why the last start or stop failed.
+  let rec = { state: 'idle', take: null, error: null };
+  let recPath = null, recTimer = null;
+  let recMidi = []; // the MIDI heard during the take, for its .mid file: [{ t (ms in), cmd, args }]
+  const setRec = (r) => { rec = { ...rec, ...r }; broadcast('record', rec); };
+  // Fade out (record.scd): fades the output over some seconds, then finishes the take and stops.
+  let fade = { fading: false };
+  const setFade = (f) => { fade = f; broadcast('fade', fade); };
+  const takePath = (id, ext) => join(tmp, `${id}.${ext}`);
+  const mp3s = new Map(); // id → the promise of its MP3
+  // sclang should answer within a few seconds; if it doesn't (audio not booted, scsynth hung), give up
+  const recTimeout = (what) => {
+    clearTimeout(recTimer);
+    recTimer = setTimeout(() => setRec({ state: 'idle', error: `the recording didn't ${what}` }), 8000);
+  };
+  async function onRecord(what, arg) {
+    clearTimeout(recTimer);
+    if (what === 'started') { recMidi = []; return setRec({ state: 'recording', startedAt: Date.now(), error: null }); }
+    if (what === 'failed') return setRec({ state: 'idle', error: arg || 'recording failed' });
+    if (what !== 'finished' || arg !== recPath) return;
+    const id = rec.id;
+    let seconds = 0;
+    try { const fh = await open(arg); try { const w = await wavInfo(fh); seconds = w.frames / w.rate; } finally { await fh.close(); } } catch {}
+    const notes = recMidi.filter((e) => e.cmd === 'noteOn' && e.args[2] > 0).length;
+    try { await writeFile(takePath(id, 'mid'), takeToMidi(recMidi, seconds)); } catch (e) { log(`! couldn't write the take's MIDI: ${e.message}\n`); }
+    recMidi = [];
+    setRec({ state: 'idle', take: { id, seconds, notes }, error: null });
+  }
+  function recordOn(on) {
+    if (on && (rec.state === 'idle')) {
+      const id = String(Date.now());
+      recPath = takePath(id, 'wav');
+      setRec({ state: 'starting', id, error: null });
+      recTimeout('start: is the audio running?');
+      scEval(`~recStart.value("${recPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}");`);
+    } else if (!on && (rec.state === 'recording' || rec.state === 'starting')) {
+      setRec({ state: 'stopping' });
+      recTimeout('finish');
+      scEval('~recStop.value;');
+    }
+  }
+  // A take's download name, from when it started: "AnInstrument 2026-10-14 15.42.07.wav"
+  const takeName = (id, ext) => {
+    const d = new Date(Number(id)), p2 = (n) => String(n).padStart(2, '0');
+    return `AnInstrument ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}.${p2(d.getMinutes())}.${p2(d.getSeconds())}.${ext}`;
+  };
+  // The page asks for the MP3 to be made first (POST /take-mp3), so it can show progress and errors,
+  // then downloads it; a download link can't show an error.
+  async function makeMp3(id) {
+    const wav = takePath(id, 'wav');
+    await stat(wav); // throws (404) if there's no such take
+    if (!mp3s.has(id)) mp3s.set(id, wavToMp3(wav, takePath(id, 'mp3')).catch((e) => { mp3s.delete(id); throw e; }));
+    await mp3s.get(id);
+  }
+  async function sendTake(res, id, ext) {
+    if (ext === 'mp3') await makeMp3(id);
+    const file = takePath(id, ext);
+    const { size } = await stat(file);
+    res.writeHead(200, {
+      'content-type': { mp3: 'audio/mpeg', wav: 'audio/wav', mid: 'audio/midi' }[ext],
+      'content-length': size,
+      'content-disposition': `attachment; filename="${takeName(id, ext)}"`,
+    });
+    createReadStream(file).pipe(res);
+  }
   // A part key names a Pdef or Ndef: 'pdef:drums', 'ndef:pad'. Checked strictly, since keys are
   // written into sclang source.
   const PART_KEY = /^(pdef|ndef):[A-Za-z_][A-Za-z0-9_]*$/;
@@ -467,6 +673,32 @@ export async function start({
         scEval(`~audioSetDevice.value(${lit});`);
         return json(res, 200, { ok: true });
       }
+      if (req.method === 'POST' && req.url === '/record') { // the Record button: { on }
+        const { on } = await readBody(req);
+        recordOn(!!on);
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && req.url === '/take-mp3') { // { id }: make the take's MP3, for download
+        const { id } = await readBody(req);
+        if (typeof id !== 'string' || !/^\d{10,16}$/.test(id)) return json(res, 400, { error: 'bad recording id' });
+        try { await makeMp3(id); } catch (e) {
+          return json(res, e.code === 'ENOENT' ? 404 : 500, { error: e.code === 'ENOENT' ? 'that recording is gone' : e.message });
+        }
+        return json(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && req.url === '/fade') { // { seconds } starts a fade out, { cancel: true } ends it
+        const { seconds, cancel } = await readBody(req);
+        if (cancel) { scEval('~fadeCancel.value;'); return json(res, 200, { ok: true }); }
+        if (typeof seconds !== 'number' || !(seconds >= 0.5 && seconds <= 300)) return json(res, 400, { error: 'fade length must be 0.5 to 300 seconds' });
+        scEval(`~fadeOut.value(${seconds});`);
+        return json(res, 200, { ok: true });
+      }
+      const take = req.method === 'GET' && req.url.match(/^\/take\/(\d{10,16})\.(wav|mp3|mid)$/);
+      if (take) {
+        try { return await sendTake(res, take[1], take[2]); } catch (e) {
+          return json(res, e.code === 'ENOENT' ? 404 : 500, { error: e.code === 'ENOENT' ? 'no such recording' : e.message });
+        }
+      }
       if (req.method === 'POST' && req.url === '/stop') {
         scEval('CmdPeriod.run;');
         return json(res, 200, { ok: true });
@@ -482,6 +714,8 @@ export async function start({
     ws.send(JSON.stringify({ type: 'audio', data: audio }));
     ws.send(JSON.stringify({ type: 'devices', data: devices }));
     ws.send(JSON.stringify({ type: 'parts', data: parts }));
+    ws.send(JSON.stringify({ type: 'record', data: rec }));
+    ws.send(JSON.stringify({ type: 'fade', data: fade }));
     ws.on('close', () => clients.delete(ws));
   });
 

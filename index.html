@@ -51,7 +51,7 @@
   input { flex:1; min-width:10em; }
   textarea { width:100%; height:100%; resize:none; tab-size:2; }
   /* prompt = natural language: proportional sans, roomier */
-  #prompt { flex:1; min-width:18em; height:auto; font:16px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
+  #prompt { flex:1; min-width:14em; height:auto; font:16px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif;
             letter-spacing:.005em; padding:10px 12px; }
   #prompt::placeholder { color:var(--dim); font-style:italic; }
   /* code = sclang: monospace, tighter, slightly cooler tint so it reads as "output" */
@@ -187,6 +187,24 @@
   #ledgerTable th:nth-child(-n+3), #ledgerTable td:nth-child(-n+3) { text-align:left; }
   #ledgerTable td:nth-child(7) { color:var(--fg); }
   #usage b { color:var(--fg); font-weight:500; }
+  /* recording */
+  #recBtn.on { border-color:#f44; color:#fff; background:#5a1515; font-variant-numeric:tabular-nums; }
+  #recBtn::first-letter { color:#f55; }
+  .top > .row > button { padding:8px 11px; }
+  .recCol { display:flex; flex-direction:column; gap:4px; }
+  .recCol #recBtn { flex:1; padding:4px 11px; }
+  .fadeRow { display:flex; align-items:center; gap:3px; color:var(--dim); font-size:12px; }
+  .fadeRow button { padding:2px 7px; font-size:12px; white-space:nowrap; }
+  .fadeRow button.on { border-color:#e0cf7a; color:#e0cf7a; font-variant-numeric:tabular-nums; }
+  #fadeSecs { flex:none; min-width:0; width:3.6em; padding:2px 4px; font-size:12px; text-align:right; }
+  #recBtn.on { animation:recGlow 1.6s ease-in-out infinite; }
+  #recBtn.busy { color:var(--dim); }
+  @keyframes recGlow { 0%,100% { box-shadow:0 0 0 0 #f443; } 50% { box-shadow:0 0 0 4px #f4433a; } }
+  @media (prefers-reduced-motion: reduce) { #recBtn.on { animation:none; } }
+  #takeDlg .head { display:flex; gap:10px; align-items:baseline; margin-bottom:12px; }
+  #takeDlg .takeRow { margin-bottom:4px; }
+  #takeNote.err { color:var(--err); }
+  #takeDlg button:disabled { opacity:.4; cursor:default; border-color:#444; }
   /* parts strip: one toggle per Pdef/Ndef */
   .parts { display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-width:0; }
   .parts button { padding:2px 9px; font-size:12px; border-radius:11px; }
@@ -234,6 +252,9 @@
   .st-cut b { animation:stSnip .25s ease-in-out 6 alternate; }
   .st-wait b { animation:stFlip 1.6s ease-in-out infinite; }
   .st-live b { animation:stPulse 1.2s ease-in-out infinite; }
+  .st-fade b { animation:stFadeOut 2.4s ease-in infinite; }
+  .st-fade i { animation:stFloat 2.4s ease-out infinite; } .st-fade i:nth-of-type(2) { animation-delay:1.2s; left:80%; }
+  @keyframes stFadeOut { 0% { opacity:1; transform:translateY(0); } 100% { opacity:.15; transform:translateY(3px); } }
   @keyframes stPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.18); } }
   @keyframes stSwing { from { transform:rotate(20deg); } to { transform:rotate(-35deg); } }
   @keyframes stFloat { 0% { transform:translate(0,4px); opacity:0; } 25% { opacity:1; } 100% { transform:translate(3px,-16px) rotate(15deg); opacity:0; } }
@@ -257,6 +278,13 @@
     <button id="gen" class="go">Generate</button>
     <button id="run">Run ⌘↵</button>
     <button id="stop">Stop ⌘.</button>
+    <div class="recCol">
+      <button id="recBtn" title="Record what you hear to a file. Keeps recording through Stop, so a take can span several runs; press again to finish, then save it as WAV or MP3.">⏺ Rec</button>
+      <div class="fadeRow">
+        <button id="fadeBtn" title="Fade everything out over this many seconds, then finish the recording and stop. Press again to cancel the fade.">↘ Fade</button>
+        <input id="fadeSecs" type="number" min="1" max="300" step="1" value="8" title="Fade length in seconds"><span>s</span>
+      </div>
+    </div>
     <button id="newChat" title="Start fresh: clears the editor and the conversation (save first with ♡ to keep them)">＋ New</button>
     <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
     <button id="gearBtn" title="What real instruments could play this sound, with estimated prices">🎛 Gear</button>
@@ -266,6 +294,10 @@
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
     <button id="ledgerBtn" title="Usage history: tokens and cost of every Claude request, kept across sessions">🧾 Usage</button>
+    <button id="exportScd" title="Save the editor's code as a .scd file that runs in SuperCollider on its own">⬇ Export .scd</button>
+    <button id="importScd" title="Open a .scd file into the editor (it replaces the code there; the conversation stays)">⬆ Import .scd</button>
+    <input type="file" id="scdFile" accept=".scd,.sc,.txt" hidden>
+    <button id="takeBtn" hidden title="The last recording: save it as WAV or MP3"></button>
     <div id="usage"></div>
   </div>
   <div class="parts">
@@ -289,6 +321,18 @@
       <div id="ledgerKinds"></div>
       <div id="ledgerTable"></div>
       <p class="hint" id="ledgerFile"></p>
+    </form>
+  </dialog>
+  <dialog id="takeDlg">
+    <form method="dialog">
+      <div class="head"><b>Recording</b><span class="hint" id="takeInfo"></span></div>
+      <div class="row takeRow">
+        <button type="button" class="go" id="takeWav" title="Uncompressed 24-bit, exactly what was played">Save WAV</button>
+        <button type="button" class="go" id="takeMp3" title="Compressed (320 kbps), much smaller, for sharing">Save MP3</button>
+        <button type="button" class="go" id="takeMid" title="The notes played during the take, one track per instrument, at the music's tempo, for a DAW or notation app">Save MIDI</button>
+        <button value="close">Close</button>
+      </div>
+      <p class="hint" id="takeNote">The take is kept until the app quits, or until the next recording replaces it (⬇ next to 🧾 Usage reopens this).</p>
     </form>
   </dialog>
   <dialog id="history">
@@ -359,7 +403,7 @@
   </div>
   <div id="midiBox">
     <canvas id="midi"></canvas>
-    <div id="midiInfo">midi · no notes yet. Ask for a melody or bass line "as MIDI"</div>
+    <div id="midiInfo">midi · no notes yet. Notes played by patterns show here</div>
   </div>
   <section id="errTile" hidden>
     <header>
@@ -396,7 +440,7 @@ const STATUS_ANIM = [
   [/^cut off/, 'cut', '✂️'], [/^sent|^live ↻/, 'play', '', '♪♫♩'], [/^stopped/, 'stop', '⏹'],
   [/^restarting audio|^switching output/, 'audio', '🔊', '))'], [/^saved/, 'saved', '❤️'],
   [/^loaded/, 'loaded', '📂'], [/^new conversation/, 'new', '✨'], [/^rewound/, 'rewind', '⏪'],
-  [/^no key/, 'key', '🔑'], [/^live: waiting/, 'wait', '⏳'], [/^live: edits/, 'live', '🔴'],
+  [/^no key/, 'key', '🔑'], [/^recording/, 'live', '⏺'], [/^fading out/, 'fade', '↘', '♪♫'], [/^faded out/, 'stop', '⏹'], [/^recorded/, 'saved', '💾'], [/^exported/, 'loaded', '📄'], [/^live: waiting/, 'wait', '⏳'], [/^live: edits/, 'live', '🔴'],
 ];
 const status = (t) => {
   const el = $('status');
@@ -530,7 +574,7 @@ const generate = guard(async () => {
 
 $('historyBtn').onclick = () => {
   const current = $('code').value.trim();
-  $('historyHint').textContent = `Claude sees all ${turns.length} turns${turns.length > 20 ? ' (the last 20 are sent)' : ''}.`;
+  $('historyHint').textContent = `Claude sees all ${turns.length} turns, with Generate and Fix alike.`;
   $('turns').innerHTML = turns.map((t, i) => `
     <li>
       <div class="you">${esc(t.prompt)}</div>
@@ -668,6 +712,121 @@ function saveCurrent() {
 $('heart').onclick = () => { $('saveName').value = suggestName(); renderLibrary(); $('library').showModal(); $('saveName').select(); };
 $('saveBtn').onclick = saveCurrent;
 $('saveName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveCurrent(); } });
+
+// --- recording: ⏺ Rec records the output (record.scd); a finished take saves as WAV or MP3 --------
+let rec = { state: 'idle', take: null }, recTick = null;
+const REC_TITLE = $('recBtn').title;
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function onRecord(r) {
+  const prev = rec; rec = r;
+  const b = $('recBtn');
+  clearInterval(recTick);
+  b.classList.toggle('on', r.state === 'recording');
+  b.classList.toggle('busy', r.state === 'starting' || r.state === 'stopping');
+  if (r.state === 'recording') {
+    const show = () => (b.textContent = '⏺ ' + mmss((Date.now() - r.startedAt) / 1000));
+    show(); recTick = setInterval(show, 500);
+  } else b.textContent = r.state === 'starting' ? '⏺ starting…' : r.state === 'stopping' ? '⏺ finishing…' : '⏺ Rec';
+  b.title = r.state === 'recording' ? 'Recording. Press to finish the take (Stop doesn\'t end it).' : REC_TITLE;
+  if (r.state === 'recording' && prev.state !== 'recording') status('recording');
+  if (r.error && r.error !== prev.error) { log(`! ${r.error}\n`); status(''); }
+  const t = r.take;
+  $('takeBtn').hidden = !t;
+  if (t) $('takeBtn').textContent = '⬇ take ' + mmss(t.seconds);
+  // a new take just finished: offer to save it
+  if (t && t.id !== prev.take?.id && prev.state !== 'idle') { status('recorded'); openTake(); }
+}
+$('recBtn').onclick = guard(async () => {
+  if (rec.state === 'stopping') return;
+  await post('/record', { on: rec.state === 'idle' });
+});
+function openTake() {
+  const t = rec.take; if (!t) return;
+  $('takeInfo').textContent = `${mmss(t.seconds)} · ${new Date(Number(t.id)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${t.notes || 'no'} note${t.notes === 1 ? '' : 's'}`;
+  $('takeMid').disabled = !t.notes;
+  $('takeMid').title = t.notes ? MID_TITLE : 'No notes were played during this take (only patterns\' notes and ~midi are captured, not Ndefs)';
+  $('takeNote').className = 'hint';
+  $('takeNote').textContent = 'The take is kept until the app quits, or until the next recording replaces it (⬇ take, next to 🧾 Usage, reopens this).';
+  if (!$('takeDlg').open) $('takeDlg').showModal();
+}
+$('takeBtn').onclick = openTake;
+const download = (href) => { const a = document.createElement('a'); a.href = href; a.download = ''; document.body.append(a); a.click(); a.remove(); };
+$('takeWav').onclick = () => download(`/take/${rec.take.id}.wav`);
+const MID_TITLE = $('takeMid').title;
+$('takeMid').onclick = () => download(`/take/${rec.take.id}.mid`);
+$('takeMp3').onclick = async () => {
+  const b = $('takeMp3'), id = rec.take.id;
+  b.disabled = true; b.textContent = 'Making MP3…';
+  try {
+    await post('/take-mp3', { id });
+    download(`/take/${id}.mp3`);
+  } catch (e) {
+    $('takeNote').className = 'hint err'; $('takeNote').textContent = e.message;
+  } finally { b.disabled = false; b.textContent = 'Save MP3'; }
+};
+
+// Fade out: fades the whole output over the chosen seconds, then finishes the take and stops (record.scd)
+let fade = { fading: false }, fadeTick = null;
+const FADE_TITLE = $('fadeBtn').title;
+$('fadeSecs').value = pref('fadeSecs', '8');
+$('fadeSecs').onchange = () => {
+  const v = Math.min(300, Math.max(1, Math.round(+$('fadeSecs').value || 8)));
+  $('fadeSecs').value = v; setPref('fadeSecs', String(v));
+};
+function onFade(f) {
+  const prev = fade; fade = f;
+  const b = $('fadeBtn');
+  clearInterval(fadeTick);
+  b.classList.toggle('on', f.fading);
+  b.title = f.fading ? 'Fading out. Press to cancel and bring the sound back.' : FADE_TITLE;
+  if (f.fading) {
+    const show = () => (b.textContent = `↘ ${Math.max(0, Math.ceil(f.seconds - (Date.now() - f.startedAt) / 1000))}s`);
+    show(); fadeTick = setInterval(show, 250);
+    if (!prev.fading) status('fading out…');
+  } else {
+    b.textContent = '↘ Fade';
+    if (prev.fading && f.done) { midiAllOff(); if (rec.state === 'idle') status('faded out'); }
+  }
+}
+$('fadeBtn').onclick = guard(async () => {
+  if (fade.fading) { await post('/fade', { cancel: true }); status(''); return; }
+  $('fadeSecs').onchange();
+  await post('/fade', { seconds: +$('fadeSecs').value });
+});
+
+// --- .scd files: export the editor's code to run in SuperCollider by itself, or import one ---------
+// The export is wrapped in s.waitForBoot, which boots the server and runs the code in a Routine, as the
+// app does (so .wait and s.sync work); importing an export takes the wrapper off again.
+const SCD_HEAD = '// Exported from AnInstrument';
+function exportScd() {
+  const code = $('code').value.trim();
+  if (!code) { status('nothing to export'); return; }
+  const lines = [`${SCD_HEAD} on ${new Date().toLocaleDateString()}${turns[0] ? `: "${turns[0].prompt.replace(/\s+/g, ' ').slice(0, 80)}"` : ''}.`,
+    '// In SuperCollider: click inside the outer brackets and press Cmd-Return. Cmd-. stops it.'];
+  if (/~midi\b/.test(code)) lines.push('// ~midi is the app\'s MIDI display; outside the app, point it at a real port first, e.g. MIDIClient.init; ~midi = MIDIOut(0);');
+  const text = `${lines.join('\n')}\n(\ns.waitForBoot {\n${code}\n};\n)\n`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = (suggestName() || 'instrument').replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.scd';
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  status('exported ' + a.download);
+}
+const unwrapScd = (t) => {
+  const m = t.replace(/\r\n?/g, '\n').match(/^\/\/ Exported from AnInstrument[^\n]*\n(?:\/\/[^\n]*\n)*\(\ns\.waitForBoot \{\n([\s\S]*)\n\};\n\)\s*$/);
+  return m ? m[1] : t.replace(/\r\n?/g, '\n');
+};
+$('exportScd').onclick = exportScd;
+$('importScd').onclick = () => $('scdFile').click();
+$('scdFile').onchange = async () => {
+  const f = $('scdFile').files[0]; $('scdFile').value = '';
+  if (!f) return;
+  if (f.size > 1e6) { log(`! ${f.name} is too big for the editor (over 1 MB)\n`); return; }
+  const code = unwrapScd(await f.text());
+  if ($('code').value.trim() && $('code').value !== code && !confirm(`Open ${f.name}? It replaces the code in the editor.`)) return;
+  $('code').value = code;
+  status(`loaded ${f.name} — Run to hear it`);
+};
 
 // --- find in the code editor (⌘F) ----------------------------------------------
 // A textarea can't highlight ranges itself, so matches are drawn as <mark>s in #marks, a copy of the
@@ -1086,6 +1245,8 @@ ws.onmessage = (e) => {
   else if (m.type === 'audio') onAudio(m.data);
   else if (m.type === 'devices') onDevices(m.data);
   else if (m.type === 'parts') { parts = m.data; renderParts(); }
+  else if (m.type === 'record') onRecord(m.data);
+  else if (m.type === 'fade') onFade(m.data);
 };
 ws.onclose = () => log('\n[disconnected from server]\n');
 
@@ -1304,7 +1465,7 @@ function drawMidi() {
 
   notes = notes.filter((n) => (n.t1 ?? now) > now - WINDOW_MS && now - n.t0 < 60000); // drop stuck notes after 60 s
   ticks = ticks.filter((t) => t.t > now - WINDOW_MS);
-  if (!notes.length && !ticks.length) { $('midiInfo').textContent = 'midi · no notes yet. Ask for a melody or bass line "as MIDI"'; return; }
+  if (!notes.length && !ticks.length) { $('midiInfo').textContent = 'midi · no notes yet. Notes played by patterns show here'; return; }
 
   // pitch range follows the music, with at least two octaves of room
   let lo = 127, hi = 0;

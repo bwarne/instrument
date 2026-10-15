@@ -33,7 +33,9 @@ s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
 ~scopeStart = {
     var syn;
     ~scopeRoutine.stop;
-    syn = Synth.tail(s.defaultGroup, \instrumentScope, [\buf, buf]);
+    // just after the default group, where all the music plays; record.scd's fade-out goes between
+    // the two, so the scope and meters show the fade too
+    syn = Synth.after(s.defaultGroup, \instrumentScope, [\buf, buf]);
     ~scopeRoutine = Routine({
         loop {
             syn.set(\t_trig, 1);
@@ -47,12 +49,13 @@ s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
 
 // Restart audio: stop everything, quit scsynth and boot it again. scsynth picks its output device and
 // sample rate only when it boots, so this is how it follows a device change (headphones connected,
-// Bluetooth switching to call mode). Your code has to be run again afterwards.
+// Bluetooth switching to call mode). Your code has to be run again afterwards. A recording in progress
+// (record.scd) is finished first, so its file is complete.
 ~audioRestart = {
     ~audioRestarting = true;
     CmdPeriod.run;
     ~scopeRoutine.stop;
-    s.quit(onComplete: { ~audioRestarting = false; ~audioStart.value });
+    ~recStop.value({ s.quit(onComplete: { ~audioRestarting = false; ~audioStart.value }) });
 };
 
 // Switch output device: scsynth can only change device by rebooting

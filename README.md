@@ -10,7 +10,7 @@ https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm6
 ## Features
 
 - **Prompt to code, as a conversation**: Claude writes runnable sclang into an editable editor, and each
-  follow-up refines it. Claude sees the whole conversation (the last 20 turns, cached so follow-ups stay cheap)
+  follow-up refines it. Claude sees the whole conversation, Fix included (cached, so follow-ups stay cheap)
   while the editor shows only the latest code. Your own edits between turns are sent along as the current
   version. **💬** shows the full history and can rewind to any earlier turn (Claude's context rewinds with it); **New** starts over.
   Chords are annotated with their name, notes and role in the key.
@@ -23,7 +23,15 @@ https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm6
   (RMS, peak and held peak in dBFS) and a clip light that stays on for 3 s after any sample reaches full scale.
 - **Output device** dropdown under the scope header (remembered between launches). **Audio health**: warns when the device's real sample rate drifts from scsynth's
   (e.g. Bluetooth headphones dropping into call mode), and **⟳ Restart audio** reboots scsynth on the current device.
-- **MIDI tile**: a piano roll of anything sent to `~midi` (visualization only unless you set `MIDI_PORT`).
+- **MIDI tile**: a piano roll of every note a pattern plays (each instrument in its own colour), plus anything
+  sent to `~midi` (visualization only unless you set `MIDI_PORT`), timed to match the sound.
+- **⏺ Rec**: records the output as a take. It keeps recording through Stop, so a take can span several runs;
+  press again to finish, then save it as WAV (24-bit), MP3 (320 kbps) or MIDI (the notes played during the
+  take, one track per part, at the music's tempo). **⬇ take** reopens the last one.
+- **↘ Fade** (under ⏺ Rec): fades everything out over the seconds you set, then finishes the take and stops.
+  Press it again to cancel the fade.
+- **⬇ Export / ⬆ Import .scd**: export saves the code as a file that runs in SuperCollider by itself (wrapped in
+  `s.waitForBoot`); import opens a `.scd` file into the editor, taking that wrapper off again.
 - **Error tile**: when a run errors, Claude explains why (without rewriting your code); **Fix** asks for a corrected version.
 - **🎛 Gear**: which real instruments (synths, drum machines, pedals) could play the current sound, which part each
   covers, how to dial it in, estimated new/used prices, suggested rigs, and Sweetwater/Reverb search links.
@@ -100,7 +108,8 @@ browser ──HTTP──▶ server.js ──stdin──▶ sclang ──▶ scsy
 ```
 
 `server.js` spawns `sclang`, calls the Claude API, and writes each run to a temp file wrapped in `fork { … }`
-so `s.sync` works anywhere. `scope.scd` and `midi.scd` run inside sclang at startup. The desktop app
+so `s.sync` works anywhere. `scope.scd`, `midi.scd`, `parts.scd` and `record.scd` run inside sclang at
+startup. Recordings go to the server's temp folder as WAV; MP3s are encoded from them in Node (lamejs) on request. The desktop app
 (`electron/main.js`) starts the same server on port 47800 and shows the page in its own window.
 
 The server runs whatever sclang code it is sent, and sclang can run shell commands, so it only accepts its

@@ -65,6 +65,9 @@ var last;
         if(keep.includes(~partsKey.(p[0], p[1])).not and: { p[2] }) { ~partsApply.(~partsKey.(p[0], p[1]), false) };
     };
     ~partsMuted.do { |k| ~partsMute.(k, true) };
+    // tag each Pdef's events with its name, so the MIDI tile and a take's MIDI file can tell parts apart
+    // (midi.scd reads \part); the Pdef's own keys still win, as \part is only a default
+    Pdef.all.keysValuesDo { |name, p| if(p.get(\part) != name) { p.set(\part, name) } };
     ~partsReport.(true);
 };
 
