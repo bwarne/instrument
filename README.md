@@ -31,6 +31,8 @@ by GitHub Pages; `docs/og.png` is the preview image.
 - **⏺ Rec**: records the output as a take. It keeps recording through Stop, so a take can span several runs;
   press again to finish, then save it as WAV (24-bit), MP3 (320 kbps) or MIDI (the notes played during the
   take, one track per part, at the music's tempo). **⬇ take** reopens the last one.
+- **⏺ +Rec** (under Run, ⌘⇧↵): starts a take, then runs the code once the recorder is going, so the take
+  catches the first note. During a take it just runs the code.
 - **↘ Fade** (under ⏺ Rec): fades everything out over the seconds you set, then finishes the take and stops.
   Press it again to cancel the fade.
 - **⬇ Export / ⬆ Import .scd**: export saves the code as a file that runs in SuperCollider by itself (wrapped in

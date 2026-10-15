@@ -192,7 +192,9 @@
   #recBtn::first-letter { color:#f55; }
   .top > .row > button { padding:8px 11px; }
   .recCol { display:flex; flex-direction:column; gap:4px; }
-  .recCol #recBtn { flex:1; padding:4px 11px; }
+  .recCol > button:first-child { flex:1; padding:4px 11px; }
+  .recCol .mini { padding:2px 7px; font-size:12px; white-space:nowrap; }
+  .recCol .mini::first-letter { color:#f55; }
   .fadeRow { display:flex; align-items:center; gap:3px; color:var(--dim); font-size:12px; }
   .fadeRow button { padding:2px 7px; font-size:12px; white-space:nowrap; }
   .fadeRow button.on { border-color:#e0cf7a; color:#e0cf7a; font-variant-numeric:tabular-nums; }
@@ -292,7 +294,10 @@
   <div class="row">
     <textarea id="prompt" rows="3" placeholder="describe a sound, or how to change it…" title="Enter to send, Shift+Enter for a new line" autofocus></textarea>
     <button id="gen" class="go">Generate</button>
-    <button id="run">Run ⌘↵</button>
+    <div class="recCol">
+      <button id="run">Run ⌘↵</button>
+      <button id="runRec" class="mini" title="Run + Rec (⌘⇧↵): start recording, then run the code, so the take catches the very first note. If a take is already going, just runs the code into it.">⏺ +Rec</button>
+    </div>
     <button id="stop">Stop ⌘.</button>
     <div class="recCol">
       <button id="recBtn" title="Record what you hear to a file. Keeps recording through Stop, so a take can span several runs; press again to finish, then save it as WAV or MP3.">⏺ Rec</button>
@@ -304,11 +309,11 @@
     <button id="newChat" title="Start fresh: clears the editor and the conversation (save first with ♡ to keep them)">＋ New</button>
     <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
     <button id="gearBtn" title="What real instruments could play this sound, with estimated prices">🎛 Gear</button>
-    <button id="cog" title="Settings">⚙</button>
     <span id="status"></span>
   </div>
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
+    <button id="cog" title="Settings: your Claude connection, effort and model">⚙ Settings</button>
     <button id="ledgerBtn" title="Usage history: tokens and cost of every Claude request, kept across sessions">🧾 Usage</button>
     <button id="exportScd" title="Save the editor's code as a .scd file that runs in SuperCollider on its own">⬇ Export .scd</button>
     <button id="importScd" title="Open a .scd file into the editor (it replaces the code there; the conversation stays)">⬆ Import .scd</button>
@@ -508,7 +513,7 @@ const post = async (path, body) => {
 // A missing, rejected or out-of-credit key opens the Connect dialog at the step that fixes it.
 const guard = (fn) => async () => {
   try { await fn(); } catch (e) {
-    status(''); log('! ' + e.message + '\n');
+    status(''); if (!e.logged) log('! ' + e.message + '\n');
     if (['no_key', 'bad_key', 'no_credit'].includes(e.code)) openConnect(e.code);
   }
 };
@@ -760,7 +765,7 @@ $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.isComposing) { e.preventDefault(); generate(); }
 });
 addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); run(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); e.shiftKey ? runRec() : run(); }
   if ((e.metaKey || e.ctrlKey) && e.key === '.') { e.preventDefault(); stop(); }
 });
 
@@ -832,6 +837,11 @@ function onRecord(r) {
   } else b.textContent = r.state === 'starting' ? '⏺ starting…' : r.state === 'stopping' ? '⏺ finishing…' : '⏺ Rec';
   b.title = r.state === 'recording' ? 'Recording. Press to finish the take (Stop doesn\'t end it).' : REC_TITLE;
   if (r.state === 'recording' && prev.state !== 'recording') status('recording');
+  if (r.state === 'recording' || r.state === 'idle') {
+    const w = recWaiters; recWaiters = [];
+    // the error is already in the log (above), so the waiter fails quietly
+    for (const { ok, fail } of w) r.state === 'recording' ? ok() : fail(Object.assign(new Error(r.error || "the recording didn't start"), { logged: !!r.error }));
+  }
   if (r.error && r.error !== prev.error) { log(`! ${r.error}\n`); status(''); }
   const t = r.take;
   $('takeBtn').hidden = !t;
@@ -839,6 +849,23 @@ function onRecord(r) {
   // a new take just finished: offer to save it
   if (t && t.id !== prev.take?.id && prev.state !== 'idle') { status('recorded'); openTake(); }
 }
+// Run + Rec: the code runs only once the recorder is running, so the take starts before the first note
+let recWaiters = [];
+const recStarted = () => new Promise((ok, fail) => {
+  recWaiters.push({ ok, fail });
+  setTimeout(() => fail(new Error("the recording didn't start")), 10000);
+});
+const runRec = guard(async () => {
+  if (rec.state === 'stopping') { status('wait: the last take is finishing'); return; }
+  if (rec.state !== 'recording') {
+    const started = recStarted();
+    if (rec.state === 'idle') await post('/record', { on: true });
+    await started;
+  }
+  await sendRun(false);
+  status('recording');
+});
+$('runRec').onclick = runRec;
 $('recBtn').onclick = guard(async () => {
   if (rec.state === 'stopping') return;
   await post('/record', { on: rec.state === 'idle' });
