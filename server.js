@@ -756,7 +756,17 @@ export async function start({
     ws.send(JSON.stringify({ type: 'record', data: rec }));
     ws.send(JSON.stringify({ type: 'fade', data: fade }));
     ws.on('close', () => clients.delete(ws));
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
   });
+  // Ping every 15 s: keeps idle sockets from being dropped, and clears out ones that died silently.
+  const heartbeat = setInterval(() => {
+    for (const ws of clients) {
+      if (!ws.isAlive) { ws.terminate(); clients.delete(ws); continue; }
+      ws.isAlive = false; ws.ping();
+    }
+  }, 15000);
+  heartbeat.unref();
 
   await new Promise((ok, fail) => {
     server.once('error', fail);

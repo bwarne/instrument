@@ -246,7 +246,7 @@
   .callcost { color:var(--dim); font-size:11px; margin-top:6px; font-variant-numeric:tabular-nums; }
   .callcost:empty { display:none; }
   .callcost b { color:#aaa; font-weight:500; }
-  #status { color:var(--dim); align-self:center; min-width:6em; display:inline-flex; align-items:center; gap:7px; }
+  #status { color:var(--dim); min-height:1.6em; display:flex; align-items:center; gap:7px; }
   /* status animations: one small icon per kind of status, see STATUS_ANIM */
   .st { position:relative; display:inline-block; width:1.3em; height:1.3em; line-height:1.3em; text-align:center; font-size:15px; }
   .st i { position:absolute; left:50%; top:50%; width:1em; height:1em; margin:-.5em; line-height:1em; font-style:normal;
@@ -309,8 +309,9 @@
     <button id="newChat" title="Start fresh: clears the editor and the conversation (save first with ♡ to keep them)">＋ New</button>
     <button id="heart" title="Save this session (code and conversation) with a short name, or load a saved one">♡ Saved</button>
     <button id="gearBtn" title="What real instruments could play this sound, with estimated prices">🎛 Gear</button>
-    <span id="status"></span>
   </div>
+  <div id="status"></div>
+  <div id="usage"></div>
   <div class="sub">
     <button id="historyBtn" hidden title="Show the whole conversation; Claude sees all of it"></button>
     <button id="cog" title="Settings: your Claude connection, effort and model">⚙ Settings</button>
@@ -319,7 +320,6 @@
     <button id="importScd" title="Open a .scd file into the editor (it replaces the code there; the conversation stays)">⬆ Import .scd</button>
     <input type="file" id="scdFile" accept=".scd,.sc,.txt" hidden>
     <button id="takeBtn" hidden title="The last recording: save it as WAV or MP3"></button>
-    <div id="usage"></div>
   </div>
   <div class="parts">
     <button id="liveBtn" title="Live: re-run the code by itself about a second after you stop typing (when the brackets balance). Errors from live edits aren't sent to Claude unless you press Explain in the error panel.">○ Live</button>
@@ -1394,21 +1394,32 @@ async function fix(isAuto) {
 }
 $('fixBtn').onclick = () => fix(false);
 $('dismiss').onclick = hideTile;
-const ws = new WebSocket(`ws://${location.host}`);
-ws.binaryType = 'arraybuffer';
-ws.onmessage = (e) => {
-  if (typeof e.data !== 'string') { frame = new Float32Array(e.data); return; }
-  const m = JSON.parse(e.data);
-  if (m.type === 'log') log(m.data);
-  else if (m.type === 'midi') onMidi(m.data);
-  else if (m.type === 'levels') onLevels(m.data);
-  else if (m.type === 'audio') onAudio(m.data);
-  else if (m.type === 'devices') onDevices(m.data);
-  else if (m.type === 'parts') { parts = m.data; renderParts(); }
-  else if (m.type === 'record') onRecord(m.data);
-  else if (m.type === 'fade') onFade(m.data);
-};
-ws.onclose = () => log('\n[disconnected from server]\n');
+// The socket carries logs, meters and the scope. If it drops (sleep, a hiccup), reconnect by itself;
+// the server sends the current audio/parts/record state again on every new connection.
+let wsDown = false, wsDelay = 500;
+function connectWs() {
+  const ws = new WebSocket(`ws://${location.host}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { wsDelay = 500; if (wsDown) { wsDown = false; log('[reconnected to server]\n'); } };
+  ws.onmessage = (e) => {
+    if (typeof e.data !== 'string') { frame = new Float32Array(e.data); return; }
+    const m = JSON.parse(e.data);
+    if (m.type === 'log') log(m.data);
+    else if (m.type === 'midi') onMidi(m.data);
+    else if (m.type === 'levels') onLevels(m.data);
+    else if (m.type === 'audio') onAudio(m.data);
+    else if (m.type === 'devices') onDevices(m.data);
+    else if (m.type === 'parts') { parts = m.data; renderParts(); }
+    else if (m.type === 'record') onRecord(m.data);
+    else if (m.type === 'fade') onFade(m.data);
+  };
+  ws.onclose = () => {
+    if (!wsDown) { wsDown = true; log('\n[disconnected from server, reconnecting…]\n'); }
+    setTimeout(connectWs, wsDelay);
+    wsDelay = Math.min(wsDelay * 2, 5000);
+  };
+}
+connectWs();
 
 // --- oscilloscope + level meters ----------------------------------------
 const cv = $('scope'), g = cv.getContext('2d');
