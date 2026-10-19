@@ -1,5 +1,5 @@
 {
-  "name": "aninstrument-share",
+  "name": "share",
   "version": "1.0.0",
   "private": true,
   "description": "Cloudflare Worker that serves AnInstrument share links: the code plus the recorded take",
