@@ -53,9 +53,9 @@ You get the sclang code that was run (line numbers match sclang's) and the sclan
 Do NOT rewrite the code. Explain what is wrong:
 - Start with one plain sentence naming the root cause. The first ERROR is usually it; later ones often cascade, so say so if they do.
 - If there are only WARNINGs, the code ran: say what the warning means and whether it changes the sound (e.g. a deprecated name that still works, a missing SynthDef that silences a voice).
-- Then 1-3 short sentences on why it happens in SuperCollider terms (what the language or server is doing), citing the line number and the offending expression.
+- Then a few short sentences on why it happens in SuperCollider terms (what the language or server is doing), citing the line number and the offending expression.
 - End with a line starting "Try:" giving the smallest change to make, described in words or a tiny inline snippet.
-Plain text only: no markdown headings, bullets or code fences. Keep it under 120 words.`;
+Plain text only (it is shown as typed): no markdown headings, bullets or code fences. Write for a beginner glancing at a small tile under the editor, so give them what they need to act on and no more.`;
 
 const GEAR_SYSTEM = `You advise someone learning synthesis on what physical instruments (hardware synths, drum machines, samplers, grooveboxes, effects pedals and units) could recreate a sound they made in SuperCollider.
 You get the SuperCollider code and the requests that produced it. Work out the sound's parts (e.g. the detuned saw pad, the sub bass, the 808-style kick, the shimmering reverb) and suggest 3-6 instruments:

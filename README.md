@@ -129,7 +129,8 @@ so `s.sync` works anywhere. `scope.scd`, `midi.scd`, `parts.scd` and `record.scd
 startup. Recordings go to the server's temp folder as WAV; MP3s are encoded from them in Node (lamejs) on request. The desktop app
 (`electron/main.js`) starts the same server on port 47800 and shows the page in its own window.
 
-⤴ Share is the one thing that leaves the machine. `server.js` posts the code and the take's MP3 to the
+⤴ Share is the one thing that publishes your code or recordings (Claude requests go to Anthropic, and
+installed copies check GitHub Releases for updates). `server.js` posts the code and the take's MP3 to the
 Cloudflare Worker in [`share/`](share/), which stores them in R2 and serves the link; nothing is uploaded
 until you press Share in the dialog. The Anthropic key is never sent there.
 
