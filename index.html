@@ -306,6 +306,11 @@
   @keyframes stSnip { from { transform:rotate(0); } to { transform:rotate(-25deg); } }
   @keyframes stFlip { 0%,40% { transform:rotate(0); } 50%,90% { transform:rotate(180deg); } 100% { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .st b, .st i { animation:none !important; } }
+  /* the Share button while it uploads: the arrow keeps rising and fading out */
+  #shareGo .up { display:inline-block; }
+  #shareGo.busy .up { animation:shareRise 1s ease-in infinite; }
+  @keyframes shareRise { 0% { transform:translateY(5px); opacity:0; } 30% { opacity:1; } 100% { transform:translateY(-6px); opacity:0; } }
+  @media (prefers-reduced-motion: reduce) { #shareGo.busy .up { animation:none; } }
 </style>
 </head>
 <body>
@@ -390,7 +395,7 @@
         <p class="hint">Puts the code, and the take if you include it, on a page at a link of its own.
           The link isn't listed anywhere and nobody has it until you send it, but treat it as public.
           It stops working after 90 days, or as soon as you unshare it.</p>
-        <div class="row"><button type="button" class="go" id="shareGo">⤴ Share</button><button value="close">Cancel</button></div>
+        <div class="row"><button type="button" class="go" id="shareGo"><span class="up">⤴</span> <span id="shareGoLabel">Share</span></button><button value="close">Cancel</button></div>
       </div>
       <div id="sharePost" hidden>
         <div class="keyRow"><input id="shareLink" readonly>
@@ -1010,7 +1015,7 @@ $('shareGo').onclick = async () => {
   const code = $('code').value;
   if (!code.trim()) return;
   const take = rec.take, withAudio = !!take && $('shareAudio').checked;
-  $('shareGo').disabled = true;
+  $('shareGo').disabled = true; $('shareGo').classList.add('busy'); $('shareGoLabel').textContent = 'Uploading…';
   shareMsg(withAudio ? 'Uploading the code and the take…' : 'Uploading the code…');
   status('sharing…');
   try {
@@ -1031,7 +1036,7 @@ $('shareGo').onclick = async () => {
     shareMsg(e.message, 'err');
     log('! ' + e.message + '\n');
     status('');
-  } finally { $('shareGo').disabled = false; }
+  } finally { $('shareGo').disabled = false; $('shareGo').classList.remove('busy'); $('shareGoLabel').textContent = 'Share'; }
 };
 $('shareCopy').onclick = async () => {
   try { await navigator.clipboard.writeText($('shareLink').value); shareMsg('Link copied.', 'ok'); }

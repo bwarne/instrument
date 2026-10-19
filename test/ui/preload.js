@@ -17,6 +17,7 @@ window.__calls = [];
 window.fetch = async (url, opts = {}) => {
   const path = String(url).replace(/^https?:\/\/[^/]+/, '');
   window.__calls.push({ path, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+  if (path === '/share' && window.__hold) await window.__hold; // a test can keep the upload pending
   const body = routes[path] ?? { ok: true };
   return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
 };

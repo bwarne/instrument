@@ -77,8 +77,27 @@ app.whenReady().then(async () => {
     check(ready.checked === true && ready.audioLen === '(1:42)', 'the take is included by default, with its length', ready.audioLen);
     check(/2 lines · a 1:42 take/.test(ready.what), 'the header says what will be shared', ready.what);
 
-    await run(`$('shareGo').click()`);
+    // while the upload is pending the button animates and says so; afterwards it is back to normal
+    await run(`window.__hold = new Promise((r) => (window.__release = r)); $('shareGo').click()`);
     await settle();
+    const busy = await run(`({
+      busy: $('shareGo').classList.contains('busy'),
+      label: $('shareGoLabel').textContent,
+      disabled: $('shareGo').disabled,
+      anim: getComputedStyle($('shareGo').querySelector('.up')).animationName,
+    })`);
+    check(busy.busy && busy.disabled, 'the Share button is busy and disabled while uploading');
+    check(busy.label === 'Uploading…', 'its label says Uploading…', busy.label);
+    check(busy.anim === 'shareRise', 'the arrow is animated', busy.anim);
+    await run(`window.__release()`);
+    await settle();
+    const idle = await run(`({
+      busy: $('shareGo').classList.contains('busy'),
+      label: $('shareGoLabel').textContent,
+      anim: getComputedStyle($('shareGo').querySelector('.up')).animationName,
+    })`);
+    check(!idle.busy && idle.label === 'Share' && idle.anim === 'none', 'afterwards the button is back to normal', JSON.stringify(idle));
+
     const posted = await run(`({
       call: window.__calls.find((c) => c.path === '/share'),
       post: !$('sharePost').hidden,
