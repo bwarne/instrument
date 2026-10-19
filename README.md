@@ -37,6 +37,10 @@ by GitHub Pages; `docs/og.png` is the preview image.
   Press it again to cancel the fade.
 - **⬇ Export / ⬆ Import .scd**: export saves the code as a file that runs in SuperCollider by itself (wrapped in
   `s.waitForBoot`); import opens a `.scd` file into the editor, taking that wrapper off again.
+- **⤴ Share**: publishes the code, and the last take if you include it, to a link anyone can open: a page
+  with a player, the code, a Copy button and a `.scd` download, with a preview for iMessage, Slack and
+  Discord. The link isn't listed anywhere, and it stops working after 90 days or as soon as you
+  **Unshare** it. A small Cloudflare Worker serves it, not your machine; see [`share/`](share/).
 - **Error tile**: when a run errors or warns, Claude explains why (without rewriting your code); **Fix** asks for a
   corrected version. With **auto-fix** ticked, the fix is applied and run straight away, at most twice per Run,
   and never over code you've edited since. Live-mode edits are only explained when you press Explain.
@@ -110,6 +114,7 @@ window quits it and shuts down sclang and scsynth.
 | `PRICE_IN`, `PRICE_OUT` | $ per million tokens, for models not in the built-in price table |
 | `MIDI_PORT` | Part of a MIDI destination's name; also send `~midi` to that device |
 | `SCLANG`, `PORT` | Path to `sclang`, HTTP port (default 3000) |
+| `SHARE_URL` | Where ⤴ Share publishes to (default: the hosted service; see [`share/`](share/) to run your own) |
 
 ## How it works
 
@@ -124,10 +129,15 @@ so `s.sync` works anywhere. `scope.scd`, `midi.scd`, `parts.scd` and `record.scd
 startup. Recordings go to the server's temp folder as WAV; MP3s are encoded from them in Node (lamejs) on request. The desktop app
 (`electron/main.js`) starts the same server on port 47800 and shows the page in its own window.
 
-The server runs whatever sclang code it is sent, and sclang can run shell commands, so it only accepts its
-own page: it listens on `127.0.0.1`, rejects requests whose `Host` or `Origin` isn't its own (so another
-website open in your browser can't call it, including via DNS rebinding), and only accepts JSON POSTs.
-Don't expose it to a network.
+⤴ Share is the one thing that leaves the machine. `server.js` posts the code and the take's MP3 to the
+Cloudflare Worker in [`share/`](share/), which stores them in R2 and serves the link; nothing is uploaded
+until you press Share in the dialog. The Anthropic key is never sent there.
+
+The server runs whatever sclang code it is sent, and sclang can run shell commands, so it only accepts
+JSON POSTs from its own page: it listens on `127.0.0.1` and rejects requests whose `Host` or `Origin`
+isn't its own, which stops another website open in your browser from calling it, including via DNS
+rebinding. That check can't tell the page apart from another program on the same Mac, so treat local
+access as trusted and don't expose the port to a network.
 
 scsynth boots with audio input disabled, since nothing records; this also avoids a boot failure with
 Bluetooth headphones whose mic and output run at different sample rates.

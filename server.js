@@ -22,6 +22,12 @@ async function findSclang() {
   }
   return null;
 }
+// ⤴ Share posts the code (and the last take) here and gets a public link back; see share/.
+// Override with SHARE_URL in .env to point at your own deployment.
+const SHARE_URL = (process.env.SHARE_URL || 'https://aninstrument-share.peter-clark.workers.dev').replace(/\/+$/, '');
+const MAX_SHARE_CODE = 256 * 1024;   // the share service's own caps, so we fail before uploading
+const MAX_SHARE_AUDIO = 20 * 1024 * 1024;
+
 const SCOPE_PORT = 57200; // UDP: scope.scd and midi.scd send OSC here
 // .scd files are handed to sclang by path, so they must be real files (unpacked when the app is packaged)
 const here = (name) => fileURLToPath(new URL(`./${name}`, import.meta.url)).replace('app.asar', 'app.asar.unpacked');
@@ -357,6 +363,20 @@ export function takeToMidi(events, seconds) {
   ]);
 }
 
+// The app's own version, for the share service's records. Read from package.json, which is inside
+// app.asar in the packaged app (Electron's fs reads straight through it).
+let appVersion;
+async function version() {
+  if (appVersion === undefined) {
+    try {
+      appVersion = JSON.parse(await readFile(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')).version || '';
+    } catch {
+      appVersion = '';
+    }
+  }
+  return appVersion;
+}
+
 // Starts sclang (which boots scsynth) and the HTTP/WebSocket server the page talks to.
 // Returns { port, stop }. Used by `node server.js` and by the Electron app (electron/main.js).
 // dataDir holds settings.json (the chosen output device) and usage.jsonl (every Claude call's tokens and
@@ -365,6 +385,9 @@ export async function start({
   port = 3000,
   log = (d) => process.stdout.write(d),
   dataDir = join(homedir(), 'Library', 'Application Support', 'Instrument'),
+  // The UDP port sclang sends OSC to. The .scd files have 57200 compiled in, so overriding this
+  // only makes sense when audio isn't wanted: the share tests do it to run beside the real app.
+  scopePort = SCOPE_PORT,
 } = {}) {
   const settingsFile = join(dataDir, 'settings.json');
   let settings = {};
@@ -501,7 +524,6 @@ export async function start({
       else setFade({ fading: false, done: what === 'done' });
     }
   });
-  udp.bind(SCOPE_PORT, '127.0.0.1');
 
   const tmp = await mkdtemp(join(tmpdir(), 'instrument-'));
   let runCount = 0;
@@ -517,6 +539,18 @@ export async function start({
   // Fade out (record.scd): fades the output over some seconds, then finishes the take and stops.
   let fade = { fading: false };
   const setFade = (f) => { fade = f; broadcast('fade', fade); };
+
+  // Bound here, after the state its handler reads exists, and awaited: an unhandled bind error on
+  // a dgram socket would otherwise take the whole process down with a bare stack trace. In use
+  // almost always means a second copy, which is what the Electron dialog says for EADDRINUSE.
+  let udpBound = false;
+  udp.on('error', (e) => { if (udpBound) log(`! the scope/MIDI socket failed: ${e.message}\n`); });
+  await new Promise((ok, fail) => {
+    udp.once('error', (e) => fail(e.code === 'EADDRINUSE'
+      ? Object.assign(new Error(`UDP port ${scopePort} is already in use: another copy of AnInstrument (or npm start) is running.`), { code: 'EADDRINUSE' })
+      : e));
+    udp.bind(scopePort, '127.0.0.1', () => { udpBound = true; ok(); });
+  });
   const takePath = (id, ext) => join(tmp, `${id}.${ext}`);
   const mp3s = new Map(); // id → the promise of its MP3
   // sclang should answer within a few seconds; if it doesn't (audio not booted, scsynth hung), give up
@@ -577,6 +611,72 @@ export async function start({
   // A part key names a Pdef or Ndef: 'pdef:drums', 'ndef:pad'. Checked strictly, since keys are
   // written into sclang source.
   const PART_KEY = /^(pdef|ndef):[A-Za-z_][A-Za-z0-9_]*$/;
+
+  // --- ⤴ Share (share/, a Cloudflare Worker) ---
+  // Publishes the editor's code, and the last take's MP3 if asked for, as a link anyone can open.
+  // Nothing leaves the machine until the user presses Share in the dialog, which is where the
+  // page explains that the link is public. The token comes back so the page can unshare later.
+  async function shareSketch({ code, title, takeId, parts, audio = true }) {
+    if (typeof code !== 'string' || !code.trim()) throw new Error('Nothing in the editor to share');
+    if (code.length > MAX_SHARE_CODE) throw new Error('That code is too long to share');
+    const form = new FormData();
+    form.append('code', code);
+    form.append('app', await version());
+    if (typeof title === 'string' && title.trim()) form.append('title', title.trim().slice(0, 120));
+    if (Array.isArray(parts)) {
+      form.append('parts', parts.filter((k) => typeof k === 'string' && PART_KEY.test(k)).slice(0, 16).join(','));
+    }
+
+    if (audio && takeId != null) {
+      const id = String(takeId);
+      if (!/^\d{10,16}$/.test(id)) throw new Error('bad recording id');
+      await makeMp3(id); // ENOENT if that take is gone; encodes it if it hasn't been yet
+      const mp3 = takePath(id, 'mp3');
+      const { size } = await stat(mp3);
+      if (size > MAX_SHARE_AUDIO) {
+        throw new Error(`That take is ${(size / 1e6).toFixed(1)} MB, over the ${MAX_SHARE_AUDIO / 1e6} MB share limit. `
+          + 'Share the code on its own, or record a shorter take.');
+      }
+      form.append('audio', new Blob([await readFile(mp3)], { type: 'audio/mpeg' }), 'take.mp3');
+      if (rec.take?.id === id) {
+        form.append('seconds', String(Math.round(rec.take.seconds || 0)));
+        form.append('notes', String(rec.take.notes || 0));
+      }
+    }
+
+    let res;
+    try {
+      // x-aninstrument is what tells the service this came from the app and not from a web page
+      res = await fetch(`${SHARE_URL}/api/share`, {
+        method: 'POST',
+        headers: { 'x-aninstrument': '1' },
+        body: form,
+        signal: AbortSignal.timeout(180_000), // a 20 MB take on a slow line
+      });
+    } catch (e) {
+      throw new Error(`Couldn't reach the share service (${e.name === 'TimeoutError' ? 'timed out' : e.message}).`);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `The share service returned ${res.status}.`);
+    return body;
+  }
+
+  async function unshareSketch({ id, token }) {
+    if (!/^[a-z0-9]{12}$/.test(String(id ?? ''))) throw new Error('bad share id');
+    let res;
+    try {
+      res = await fetch(`${SHARE_URL}/api/share/${id}`, {
+        method: 'DELETE',
+        headers: { 'x-share-token': String(token ?? '') },
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (e) {
+      throw new Error(`Couldn't reach the share service (${e.name === 'TimeoutError' ? 'timed out' : e.message}).`);
+    }
+    if (res.status === 404) return { ok: true, gone: true }; // already deleted or expired
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `The share service returned ${res.status}.`);
+    return { ok: true };
+  }
 
   // keep: the part keys the code mentions outside comments (the page works them out). After the code
   // runs, parts.scd stops every other part, so deleting or commenting out a part silences it.
@@ -724,6 +824,12 @@ export async function start({
           return json(res, e.code === 'ENOENT' ? 404 : 500, { error: e.code === 'ENOENT' ? 'that recording is gone' : e.message });
         }
         return json(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && req.url === '/share') { // { code, title, takeId, parts, audio }
+        return json(res, 200, await shareSketch(await readBody(req)));
+      }
+      if (req.method === 'POST' && req.url === '/unshare') { // { id, token } from the share
+        return json(res, 200, await unshareSketch(await readBody(req)));
       }
       if (req.method === 'POST' && req.url === '/fade') { // { seconds } starts a fade out, { cancel: true } ends it
         const { seconds, cancel } = await readBody(req);

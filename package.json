@@ -4,6 +4,7 @@
   "main": "electron/main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "test:ui": "electron test/ui",
     "start": "node --env-file-if-exists=.env server.js",
     "app": "sh build/dev-name.sh && electron .",
     "dist": "NODE_OPTIONS=--experimental-require-module electron-builder --mac --dir",
