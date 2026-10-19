@@ -24,7 +24,7 @@ async function findSclang() {
 }
 // ⤴ Share posts the code (and the last take) here and gets a public link back; see share/.
 // Override with SHARE_URL in .env to point at your own deployment.
-const SHARE_URL = (process.env.SHARE_URL || 'https://aninstrument-share.peter-clark.workers.dev').replace(/\/+$/, '');
+const SHARE_URL = (process.env.SHARE_URL || 'https://share.jono.solutions').replace(/\/+$/, '');
 const MAX_SHARE_CODE = 256 * 1024;   // the share service's own caps, so we fail before uploading
 const MAX_SHARE_AUDIO = 20 * 1024 * 1024;
 
@@ -545,12 +545,19 @@ export async function start({
   // almost always means a second copy, which is what the Electron dialog says for EADDRINUSE.
   let udpBound = false;
   udp.on('error', (e) => { if (udpBound) log(`! the scope/MIDI socket failed: ${e.message}\n`); });
-  await new Promise((ok, fail) => {
-    udp.once('error', (e) => fail(e.code === 'EADDRINUSE'
-      ? Object.assign(new Error(`UDP port ${scopePort} is already in use: another copy of AnInstrument (or npm start) is running.`), { code: 'EADDRINUSE' })
-      : e));
-    udp.bind(scopePort, '127.0.0.1', () => { udpBound = true; ok(); });
-  });
+  try {
+    await new Promise((ok, fail) => {
+      udp.once('error', (e) => fail(e.code === 'EADDRINUSE'
+        ? Object.assign(new Error(`UDP port ${scopePort} is already in use: another copy of AnInstrument (or npm start) is running.`), { code: 'EADDRINUSE' })
+        : e));
+      udp.bind(scopePort, '127.0.0.1', () => { udpBound = true; ok(); });
+    });
+  } catch (e) {
+    // sclang is already running by now; without this it would outlive the failed start
+    if (sc) try { process.kill(-sc.pid); } catch {}
+    try { udp.close(); } catch {}
+    throw e;
+  }
   const takePath = (id, ext) => join(tmp, `${id}.${ext}`);
   const mp3s = new Map(); // id → the promise of its MP3
   // sclang should answer within a few seconds; if it doesn't (audio not booted, scsynth hung), give up
@@ -658,6 +665,12 @@ export async function start({
     }
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `The share service returned ${res.status}.`);
+    // The page shows this link, opens it and keeps it, so it has to be a share on the service we
+    // posted to, not whatever the response says (a javascript: URL, another site).
+    if (!/^[a-z0-9]{12}$/.test(String(body.id)) || typeof body.token !== 'string'
+        || typeof body.url !== 'string' || !body.url.startsWith(`${SHARE_URL}/s/`)) {
+      throw new Error('The share service sent back something unexpected, so the link was not used.');
+    }
     return body;
   }
 

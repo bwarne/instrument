@@ -1,9 +1,13 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "aninstrument-share",
+  "name": "share",
   "main": "src/index.js",
   "compatibility_date": "2026-10-15",
   "observability": { "enabled": true },
+
+  // The public address. A custom domain creates the DNS record and certificate by itself, as long
+  // as the zone is on this Cloudflare account.
+  "routes": [{ "pattern": "share.jono.solutions", "custom_domain": true }],
 
   // Audio and code both live here: s/<id>.json and s/<id>.mp3.
   "r2_buckets": [{ "binding": "SHARES", "bucket_name": "aninstrument-shares" }],
@@ -15,7 +19,7 @@
   "ratelimits": [
     {
       "name": "SHARE_LIMIT",
-      "namespace_id": "7421",
+      "namespace_id": "48101",
       "simple": { "limit": 5, "period": 60 }
     },
     // A backstop for one source spread over many addresses, which the per-IP limit can't see.
@@ -23,7 +27,7 @@
     // Turnstile or a sign-in is what actually fixes an open endpoint (see README.md).
     {
       "name": "SHARE_FLOOD",
-      "namespace_id": "7422",
+      "namespace_id": "48102",
       "simple": { "limit": 60, "period": 60 }
     }
   ]
