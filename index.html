@@ -206,6 +206,26 @@
   #takeDlg .head { display:flex; gap:10px; align-items:baseline; margin-bottom:12px; }
   #takeDlg .takeRow { margin-bottom:4px; }
   #takeNote.err { color:var(--err); }
+  /* sharing: publish the code and the take as a link */
+  #shareDlg { width:min(560px,94vw); }
+  #shareDlg .head { display:flex; gap:10px; align-items:baseline; margin-bottom:12px; }
+  #shareDlg .head .hint { flex:1; text-align:right; }
+  #shareDlg label.inc { display:flex; gap:6px; align-items:center; margin:10px 0 0;
+                        color:var(--dim); font-size:13px; cursor:pointer; }
+  #shareDlg label.inc[hidden] { display:none; }
+  #shareDlg label.inc input { width:auto; min-width:0; flex:none; margin:0; }
+  #shareLink { font:12px ui-monospace, Menlo, monospace; }
+  #shareMsg { min-height:1.3em; margin-top:8px; }
+  #shareMsg.err { color:var(--err); }
+  #shareMsg.ok { color:var(--accent); }
+  #shareList { list-style:none; margin:12px 0 0; padding:0; max-height:30vh; overflow:auto; }
+  #shareList:empty { display:none; }
+  #shareList li { display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #2a2a2a; font-size:13px; }
+  #shareList li .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #shareList li .name a { color:var(--fg); text-decoration:none; }
+  #shareList li .name a:hover { color:var(--accent); text-decoration:underline; }
+  #shareList li .when { color:var(--dim); font-size:12px; white-space:nowrap; }
+  #shareList li button { padding:3px 9px; font-size:12px; }
   /* connecting to Claude: the first-run dialog and the ⚙ key row */
   #connect { width:min(520px,92vw); font:15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
   #connect h2 { margin:4px 0 6px; font-size:20px; }
@@ -318,6 +338,7 @@
     <button id="exportScd" title="Save the editor's code as a .scd file that runs in SuperCollider on its own">⬇ Export .scd</button>
     <button id="importScd" title="Open a .scd file into the editor (it replaces the code there; the conversation stays)">⬆ Import .scd</button>
     <input type="file" id="scdFile" accept=".scd,.sc,.txt" hidden>
+    <button id="shareBtn" title="Publish this sketch as a link: the code, and the last take if you want it, on a page anyone you send it to can open">⤴ Share</button>
     <button id="takeBtn" hidden title="The last recording: save it as WAV or MP3"></button>
     <div id="usage"></div>
   </div>
@@ -353,9 +374,32 @@
         <button type="button" class="go" id="takeWav" title="Uncompressed 24-bit, exactly what was played">Save WAV</button>
         <button type="button" class="go" id="takeMp3" title="Compressed (320 kbps), much smaller, for sharing">Save MP3</button>
         <button type="button" class="go" id="takeMid" title="The notes played during the take, one track per instrument, at the music's tempo, for a DAW or notation app">Save MIDI</button>
+        <button type="button" id="takeShare" title="Publish this take and the code as a link you can send to anyone">⤴ Share</button>
         <button value="close">Close</button>
       </div>
       <p class="hint" id="takeNote">The take is kept until the app quits, or until the next recording replaces it (⬇ next to 🧾 Usage reopens this).</p>
+    </form>
+  </dialog>
+  <dialog id="shareDlg">
+    <form method="dialog">
+      <div class="head"><b>Share this sketch</b><span class="hint" id="shareWhat"></span></div>
+      <div id="sharePre">
+        <input id="shareTitle" maxlength="120" placeholder="name this sketch (optional)" autocomplete="off" spellcheck="false">
+        <label class="inc" id="shareAudioRow" hidden><input type="checkbox" id="shareAudio" checked>
+          include the last take <span id="shareAudioLen"></span></label>
+        <p class="hint">Puts the code, and the take if you include it, on a page at a link of its own.
+          The link isn't listed anywhere and nobody has it until you send it, but treat it as public.
+          It stops working after 90 days, or as soon as you unshare it.</p>
+        <div class="row"><button type="button" class="go" id="shareGo">⤴ Share</button><button value="close">Cancel</button></div>
+      </div>
+      <div id="sharePost" hidden>
+        <div class="keyRow"><input id="shareLink" readonly>
+          <button type="button" id="shareCopy">Copy</button><button type="button" id="shareOpen">Open ↗</button></div>
+        <p class="hint" id="shareExpires"></p>
+        <div class="row"><button value="close" class="go">Done</button></div>
+      </div>
+      <div class="hint" id="shareMsg"></div>
+      <ul id="shareList"></ul>
     </form>
   </dialog>
   <dialog id="history">
@@ -479,6 +523,7 @@ const STATUS_ANIM = [
   [/^restarting audio|^switching output/, 'audio', '🔊', '))'], [/^saved/, 'saved', '❤️'],
   [/^loaded/, 'loaded', '📂'], [/^new conversation/, 'new', '✨'], [/^rewound/, 'rewind', '⏪'],
   [/^no key/, 'key', '🔑'], [/^recording/, 'live', '⏺'], [/^fading out/, 'fade', '↘', '♪♫'], [/^faded out/, 'stop', '⏹'], [/^recorded/, 'saved', '💾'], [/^exported/, 'loaded', '📄'], [/^live: waiting/, 'wait', '⏳'], [/^live: edits/, 'live', '🔴'],
+  [/^sharing/, 'think', '🔗'], [/^shared/, 'saved', '🔗'], [/^unshared/, 'cut', '✂️'],
 ];
 const status = (t) => {
   const el = $('status');
@@ -903,6 +948,96 @@ $('takeMp3').onclick = async () => {
     $('takeNote').className = 'hint err'; $('takeNote').textContent = e.message;
   } finally { b.disabled = false; b.textContent = 'Save MP3'; }
 };
+
+// --- ⤴ Share: publish the code (and the last take) as a link --------------------------------------
+// The server does the upload (see share/) and hands back the link plus a token. The token is kept
+// here, so only the app that made a share can take it down again.
+const shares = {
+  load: () => { try { return JSON.parse(localStorage.getItem('shares') || '[]'); } catch { return []; } },
+  save: (l) => { try { localStorage.setItem('shares', JSON.stringify(l)); } catch {} },
+};
+const shareMsg = (t, kind = '') => { $('shareMsg').className = 'hint ' + kind; $('shareMsg').textContent = t; };
+const shareDate = (ms) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+function renderShares() {
+  const list = shares.load().sort((a, b) => b.at - a.at);
+  $('shareList').innerHTML = list.map((s, i) => `
+    <li>
+      <span class="name"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title || s.id)}</a></span>
+      <span class="when">${s.audio ? '♪ ' : ''}${new Date(s.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+      <button type="button" data-copy-share="${i}">Copy</button>
+      <button type="button" data-unshare="${i}">Unshare</button>
+    </li>`).join('');
+}
+$('shareList').onclick = async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  const all = shares.load().sort((a, c) => c.at - a.at); // the order renderShares drew
+  if (b.dataset.copyShare != null) {
+    const s = all[+b.dataset.copyShare];
+    try { await navigator.clipboard.writeText(s.url); b.textContent = 'Copied ✓'; } catch { b.textContent = 'Copy failed'; }
+    setTimeout(() => (b.textContent = 'Copy'), 1500);
+    return;
+  }
+  if (b.dataset.unshare == null) return;
+  const s = all[+b.dataset.unshare];
+  if (!confirm(`Unshare "${s.title || s.id}"? The link stops working for everyone who has it, and the audio is deleted.`)) return;
+  b.disabled = true;
+  try {
+    const r = await post('/unshare', { id: s.id, token: s.token });
+    shares.save(shares.load().filter((x) => x.id !== s.id));
+    renderShares();
+    shareMsg(r.gone ? 'That one had already gone.' : 'Unshared.', 'ok');
+    status('unshared');
+  } catch (err) { shareMsg(err.message, 'err'); b.disabled = false; }
+};
+function openShare() {
+  const code = $('code').value, take = rec.take;
+  $('sharePre').hidden = false; $('sharePost').hidden = true;
+  shareMsg('');
+  $('shareWhat').textContent = code.trim()
+    ? `${code.split('\n').length} lines${take ? ` · a ${mmss(take.seconds)} take` : ''}` : '';
+  $('shareTitle').value = session.get() || suggestName();
+  $('shareAudioRow').hidden = !take;
+  if (take) { $('shareAudio').checked = true; $('shareAudioLen').textContent = `(${mmss(take.seconds)})`; }
+  $('shareGo').disabled = !code.trim();
+  if (!code.trim()) shareMsg('Nothing in the editor to share yet.', 'err');
+  renderShares();
+  if (!$('shareDlg').open) $('shareDlg').showModal();
+  $('shareTitle').select();
+}
+$('shareBtn').onclick = openShare;
+$('takeShare').onclick = () => { $('takeDlg').close(); openShare(); };
+$('shareGo').onclick = async () => {
+  const code = $('code').value;
+  if (!code.trim()) return;
+  const take = rec.take, withAudio = !!take && $('shareAudio').checked;
+  $('shareGo').disabled = true;
+  shareMsg(withAudio ? 'Uploading the code and the take…' : 'Uploading the code…');
+  status('sharing…');
+  try {
+    const r = await post('/share', {
+      code, title: $('shareTitle').value, parts: activeParts(code),
+      audio: withAudio, takeId: withAudio ? take.id : undefined,
+    });
+    shares.save([{ id: r.id, url: r.url, token: r.token, title: $('shareTitle').value.trim(),
+      at: Date.now(), expiresAt: r.expiresAt, audio: withAudio }, ...shares.load().filter((s) => s.id !== r.id)]);
+    $('sharePre').hidden = true; $('sharePost').hidden = false;
+    $('shareLink').value = r.url;
+    $('shareExpires').textContent = `Anyone with this link can open it. It stops working on ${shareDate(r.expiresAt)}.`;
+    renderShares();
+    try { await navigator.clipboard.writeText(r.url); shareMsg('Link copied to the clipboard.', 'ok'); }
+    catch { $('shareLink').select(); shareMsg('Copy the link above to send it.', 'ok'); }
+    status('shared');
+  } catch (e) {
+    shareMsg(e.message, 'err');
+    log('! ' + e.message + '\n');
+    status('');
+  } finally { $('shareGo').disabled = false; }
+};
+$('shareCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('shareLink').value); shareMsg('Link copied.', 'ok'); }
+  catch { $('shareLink').select(); shareMsg('Press ⌘C to copy the link.', ''); }
+};
+$('shareOpen').onclick = () => window.open($('shareLink').value, '_blank', 'noopener');
 
 // Fade out: fades the whole output over the chosen seconds, then finishes the take and stops (record.scd)
 let fade = { fading: false }, fadeTick = null;
