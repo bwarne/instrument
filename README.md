@@ -7,7 +7,7 @@ Claude to explain what went wrong.
 **Download** (Apple silicon Mac, always the latest release):
 https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm64.dmg
 
-Website (share this one: it has a link preview): https://jonowar.github.io/instrument/. It's `docs/`, served
+Website (share this one: it has a link preview): https://aninstrument.jono.solutions/. It's `docs/`, served
 by GitHub Pages; `docs/og.png` is the preview image.
 
 ## Features

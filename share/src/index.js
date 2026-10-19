@@ -36,9 +36,9 @@ const MIN_MP3_FRAMES = 10;         // fewer than this is not a recording
 const MP3_TRAILER_SLACK = 4096;    // room for an ID3v1 tag or similar after the last frame
 const TTL_DAYS = 90;
 
-const SITE = 'https://jonowar.github.io/instrument/';
+const SITE = 'https://aninstrument.jono.solutions/';
 const DOWNLOAD = 'https://github.com/jonowar/instrument/releases/latest/download/AnInstrument-arm64.dmg';
-const ICON = 'https://jonowar.github.io/instrument/icon.png'; // the compact preview's icon on iOS
+const ICON = 'https://aninstrument.jono.solutions/icon.png'; // the compact preview's icon on iOS
 
 // No l/o/0/1, so an id read off a screen can't be mistyped. 12 chars of 32 is 60 bits.
 const ID_ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
@@ -273,7 +273,7 @@ ${meta.audio ? `<meta property="og:audio" content="${esc(new URL(`/a/${id}.mp3`,
 <body>
 <div class="glow"></div>
 <main>
-  <a class="brand" href="${SITE}"><img src="https://jonowar.github.io/instrument/icon.png" alt="">AnInstrument</a>
+  <a class="brand" href="${SITE}"><img src="https://aninstrument.jono.solutions/icon.png" alt="">AnInstrument</a>
   <h1>${esc(title)}</h1>
   <p class="facts">${esc(facts.join(' · '))}</p>
   ${meta.audio
@@ -586,7 +586,7 @@ export default {
           // places the page actually uses.
           'content-security-policy': [
             "default-src 'none'",
-            "img-src https://jonowar.github.io",
+            "img-src https://aninstrument.jono.solutions",
             "media-src 'self'",
             "style-src 'unsafe-inline'",
             `script-src 'nonce-${nonce}'`,
