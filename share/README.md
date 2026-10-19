@@ -82,11 +82,11 @@ npx wrangler r2 bucket create aninstrument-shares   # once, if it doesn't exist 
 npm run deploy
 ```
 
-The live one is `https://share.jono.solutions`, which is what `server.js`
+The live one is `https://aninstrument.share.jono.solutions`, which is what `server.js`
 uses by default. To point the app somewhere else, set this in `.env` at the repo root:
 
 ```
-SHARE_URL=https://share.<your-domain>
+SHARE_URL=https://<your-share-hostname>
 ```
 
 `server.js` reads it once, when it is first imported, so `.env` has to be in place before the app

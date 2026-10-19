@@ -7,7 +7,7 @@
 
   // The public address. A custom domain creates the DNS record and certificate by itself, as long
   // as the zone is on this Cloudflare account.
-  "routes": [{ "pattern": "share.jono.solutions", "custom_domain": true }],
+  "routes": [{ "pattern": "aninstrument.share.jono.solutions", "custom_domain": true }],
 
   // Audio and code both live here: s/<id>.json and s/<id>.mp3.
   "r2_buckets": [{ "binding": "SHARES", "bucket_name": "aninstrument-shares" }],

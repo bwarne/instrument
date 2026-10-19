@@ -11,7 +11,7 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 
-const BASE = (process.env.SHARE_TEST_URL || 'https://share.jono.solutions').replace(/\/$/, '');
+const BASE = (process.env.SHARE_TEST_URL || 'https://aninstrument.share.jono.solutions').replace(/\/$/, '');
 
 // A real chain of MPEG1 Layer III frames: 128 kbps, 44.1 kHz, 417 bytes each. The Worker walks the
 // chain, so a bare header with filler behind it is not an MP3 as far as it is concerned.
