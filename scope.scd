@@ -37,12 +37,23 @@ s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
     // the two, so the scope and meters show the fade too
     syn = Synth.after(s.defaultGroup, \instrumentScope, [\buf, buf]);
     ~scopeRoutine = Routine({
+        var pending = false, sentAt = 0;
         loop {
-            syn.set(\t_trig, 1);
-            0.05.wait;                       // let the capture finish
-            // send every 2nd sample: plenty for a display, keeps the OSC packet small
-            buf.getn(0, frames, { |d| addr.sendMsg('/scope', *d[0, 2..]) });
-            0.01.wait;
+            // One request in flight at a time. If scsynth stalls (sleep, device hiccup, heavy load) and
+            // we kept asking, the unanswered /b_getn calls would fill its command FIFO and real-time
+            // memory ("FAILURE IN SERVER /b_getn out of real time memory") after a long session.
+            // A request unanswered for 2 s is given up on.
+            if(s.serverRunning and: { pending.not or: { (thisThread.seconds - sentAt) > 2 } }) {
+                pending = true;
+                sentAt = thisThread.seconds;
+                syn.set(\t_trig, 1);
+                0.05.wait;                   // let the capture finish
+                // send every 2nd sample: plenty for a display, keeps the OSC packet small
+                buf.getn(0, frames, { |d| pending = false; addr.sendMsg('/scope', *d[0, 2..]) });
+                0.01.wait;
+            } {
+                0.1.wait;
+            };
         }
     }).play(SystemClock);
 };
