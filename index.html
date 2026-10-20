@@ -1605,10 +1605,10 @@ function onAudio(a) {
 function updateAudioWarn() {
   let msg = '';
   if (restarting) msg = '';
-  else if (rateOff >= 2) msg = `The output is running at ${(audio.actual / 1000).toFixed(1)} kHz but scsynth expects ${(audio.nominal / 1000).toFixed(1)} kHz, so sound will be distorted and out of tune. The output device probably changed mode (Bluetooth headphones switch to a low-quality call mode when an app uses their mic). Fix the device, then restart audio.`;
+  else if (rateOff >= 2) msg = `The output is running at ${(audio.actual / 1000).toFixed(1)} kHz but scsynth expects ${(audio.nominal / 1000).toFixed(1)} kHz, so sound will be distorted and out of tune. Bluetooth headphones such as AirPods switch to a low-quality call mode while anything is using their microphone. To fix it: open System Settings → Sound → Input and choose the MacBook’s microphone instead of the headphones, quit any app showing the orange mic dot in Control Center (video calls, dictation, voice apps), then press Restart audio.`;
   else if (notRunning >= 5) msg = 'The audio server isn’t running (see the log for why). Check the output device, then restart audio.';
   // scsynth booted on a device that was already in a low-rate mode, so the rates agree but music suffers
-  else if (audio.running && audio.nominal > 0 && audio.nominal < 44100) msg = `The output is running at only ${(audio.nominal / 1000).toFixed(audio.nominal % 1000 ? 1 : 0)} kHz (music needs 44.1 or 48), so sound will be grainy and muffled. Bluetooth headphones drop to this call-quality mode while an app is using their mic. Find that app with the orange mic dot in Control Center, or pick another mic in System Settings → Sound → Input, then restart audio.`;
+  else if (audio.running && audio.nominal > 0 && audio.nominal < 44100) msg = `The output is running at only ${(audio.nominal / 1000).toFixed(audio.nominal % 1000 ? 1 : 0)} kHz (music needs 44.1 or 48), so sound will be grainy and muffled. Bluetooth headphones drop to this call-quality mode while an app is using their mic. To fix it: open System Settings → Sound → Input and choose the MacBook’s microphone instead of the headphones, quit any app showing the orange mic dot in Control Center, then press Restart audio.`;
   $('audioWarn').hidden = !msg;
   $('audioWarnText').textContent = msg;
 }

@@ -66,7 +66,9 @@ s.options.outDevice = "INSTRUMENT_OUT_DEVICE".getenv;
     ~audioRestarting = true;
     CmdPeriod.run;
     ~scopeRoutine.stop;
-    ~recStop.value({ s.quit(onComplete: { ~audioRestarting = false; ~audioStart.value }) });
+    // server.js then relaunches sclang itself (/relaunch): sclang reads the device list once, so only a
+    // new process notices headphones connected since it started
+    ~recStop.value({ s.quit(onComplete: { addr.sendMsg('/relaunch') }) });
 };
 
 // Switch output device: scsynth can only change device by rebooting

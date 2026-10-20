@@ -425,7 +425,10 @@ export async function start({
 
   // Without SuperCollider the page shows setup instructions instead, and asks again (/recheck) once
   // the user has installed it; then sclang starts without restarting the app.
+  let sclangPath = null;
   function launchSclang(path) {
+    sclangPath = path;
+    scReady = false;
     // sclang ignores stdin when it's Node's default socketpair; a real pipe (via cat) works.
     // detached => own process group, so sh, cat, sclang and the scsynth it boots can be killed together.
     // scope.scd reads the chosen output device from INSTRUMENT_OUT_DEVICE, so it boots on it directly
@@ -499,6 +502,12 @@ export async function start({
       for (const t of tags) { if (t !== 's') break; const e = msg.indexOf(0, off); list.push(msg.toString('utf8', off, e)); off = padded(e); }
       devices = { ...devices, list };
       broadcast('devices', devices);
+    } else if (address === '/relaunch') { // from ~audioRestart, once scsynth has quit and any take is closed
+      // a new sclang lists the output devices afresh (the old one only knows those present when it started)
+      try { process.kill(-sc.pid); } catch {}
+      parts = [];
+      broadcast('parts', parts);
+      launchSclang(sclangPath);
     } else if (address === '/parts') { // kind name playing muted, repeated
       const vals = [];
       for (const t of tags) {
