@@ -98,6 +98,18 @@ const GEAR_SCHEMA = (() => {
   };
 })();
 
+// --- Providers -------------------------------------------------------------
+// Claude goes through Anthropic's SDK. Everything else speaks the OpenAI chat-completions protocol, which
+// is what OpenAI, Meta's Llama API, Ollama (local Llama, free), Together, Groq and OpenRouter all offer:
+// pick one, or "Other" with its base URL. The page lists these in Connect (GET /key returns the table).
+export const PROVIDERS = {
+  anthropic: { name: 'Claude (Anthropic)', keyUrl: 'https://platform.claude.com/settings/keys', billingUrl: 'https://platform.claude.com/settings/billing', keyPrefix: 'sk-ant-' },
+  openai: { name: 'OpenAI', baseURL: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys', billingUrl: 'https://platform.openai.com/settings/organization/billing' },
+  llama: { name: 'Meta Llama API', baseURL: 'https://api.llama.com/compat/v1', keyUrl: 'https://llama.developer.meta.com/' },
+  ollama: { name: 'Ollama (local, free)', baseURL: 'http://localhost:11434/v1', noKey: true, free: true },
+  custom: { name: 'Other (OpenAI-compatible)', baseURL: '' },
+};
+
 // --- Claude ---------------------------------------------------------------
 // $ per 1M tokens [input, output], from Anthropic's published list prices (Haiku 5.5's are for prompts
 // up to 100K tokens). Override with PRICE_IN / PRICE_OUT in .env, e.g. when MODEL isn't listed here.
@@ -133,14 +145,16 @@ const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const pickModel = (m) => (m && (m in PRICES || m === MODEL) ? m : MODEL);
 
 // --- the API key ---
-// .env's ANTHROPIC_API_KEY, unless it's the placeholder from .env.example
-const envKey = () => { const k = process.env.ANTHROPIC_API_KEY; return k && !k.endsWith('...') ? k : null; };
+// .env's ANTHROPIC_API_KEY (or OPENAI_API_KEY / LLAMA_API_KEY), unless it's the placeholder from .env.example
+const ENV_KEYS = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', llama: 'LLAMA_API_KEY' };
+const envKey = (provider = 'anthropic') => { const k = process.env[ENV_KEYS[provider]]; return k && !k.endsWith('...') ? k : null; };
 const keyHint = (k) => `${k.slice(0, 7)}…${k.slice(-4)}`; // enough to recognise a key without revealing it
 // An Error with a code the page acts on: no_key, bad_key, no_credit
 const coded = (message, code) => Object.assign(new Error(message), { code });
 
 // Checks a key with a free request (listing models). Credit isn't checked: that only shows on a real call.
-export async function checkKey(key) {
+export async function checkKey(key, conn) {
+  if (conn && conn.provider !== 'anthropic') return checkOpenAIKey(key, conn);
   if (typeof key !== 'string' || !/^sk-ant-[\w-]{20,}$/.test(key.trim())) {
     return { ok: false, error: "That doesn't look like an Anthropic API key. They start with sk-ant-." };
   }
@@ -154,10 +168,108 @@ export async function checkKey(key) {
   }
 }
 
+// --- OpenAI-compatible providers (OpenAI, Meta Llama API, Ollama, …) ---
+const baseOf = (conn) => String(conn.baseURL || PROVIDERS[conn.provider]?.baseURL || '').replace(/\/+$/, '');
+const validBase = (u) => { try { return /^https?:$/.test(new URL(u).protocol); } catch { return false; } };
+// models that can't chat, so the page's suggestions list isn't mostly noise
+const NOT_CHAT = /embed|whisper|tts|dall-e|moderation|image|audio|realtime|transcribe|davinci|babbage|rerank|guard/i;
+
+async function checkOpenAIKey(key, conn) {
+  const base = baseOf(conn), p = PROVIDERS[conn.provider];
+  if (!p) return { ok: false, error: 'Unknown provider.' };
+  if (!validBase(base)) return { ok: false, error: 'Enter the base URL, e.g. https://api.example.com/v1' };
+  key = typeof key === 'string' ? key.trim() : '';
+  if (!key && !p.noKey) return { ok: false, error: 'Paste the API key.' };
+  try {
+    const r = await fetch(base + '/models', {
+      headers: key ? { authorization: `Bearer ${key}` } : {}, signal: AbortSignal.timeout(15000),
+    });
+    if (r.status === 401 || r.status === 403) return { ok: false, error: `${p.name} rejected this key. Copy it again from the provider's site.` };
+    if (!r.ok) return { ok: false, error: `${p.name} answered ${r.status} when checking the key.` };
+    const j = await r.json().catch(() => ({}));
+    const models = (Array.isArray(j.data) ? j.data : Array.isArray(j.models) ? j.models : [])
+      .map((m) => m?.id || m?.name).filter((id) => typeof id === 'string' && !NOT_CHAT.test(id)).sort();
+    return { ok: true, models };
+  } catch (e) {
+    return { ok: false, error: conn.provider === 'ollama'
+      ? "Couldn't reach Ollama at " + base + '. Is it running (ollama serve) with a model pulled?'
+      : `Couldn't reach ${base}: ${e.message}` };
+  }
+}
+
+// Same contract as ask() for Anthropic: { text, truncated, usage }, and the same usage-history line.
+async function askOpenAI(conn, system, content, maxTokens, { model, effort, format, kind }) {
+  const p = PROVIDERS[conn.provider];
+  if (!p) throw new Error('Unknown provider: ' + conn.provider);
+  const base = baseOf(conn);
+  if (!validBase(base)) throw coded(`No base URL for ${p.name}: set it under ⚙`, 'no_key');
+  const key = conn.key || envKey(conn.provider);
+  if (!key && !p.noKey) throw coded(`No API key yet: connect ${p.name} under ⚙`, 'no_key');
+  if (typeof model !== 'string' || !/^[\w.:\/@-]{1,120}$/.test(model)) throw new Error(`Choose a model for ${p.name} under ⚙ Settings`);
+  // The Anthropic-style messages carry cache_control blocks; here content is plain text.
+  const flat = (c) => (Array.isArray(c) ? c.map((b) => b.text ?? '').join('') : c);
+  const msgs = (Array.isArray(content) ? content : [{ role: 'user', content }]).map((m) => ({ role: m.role, content: flat(m.content) }));
+  // Structured output: ask for JSON in the prompt (works everywhere), and JSON mode where it exists.
+  const sys = format
+    ? `${system}\n\nReply with ONLY a JSON object that matches this JSON Schema, no prose and no code fences:\n${JSON.stringify(format)}`
+    : system;
+  const openai = conn.provider === 'openai';
+  const reasoning = openai && /^(o\d|gpt-5)/.test(model);
+  const body = {
+    model,
+    messages: [{ role: 'system', content: sys }, ...msgs],
+    // OpenAI's newer models only take max_completion_tokens; other servers only know max_tokens
+    [openai ? 'max_completion_tokens' : 'max_tokens']: maxTokens,
+    ...(reasoning && EFFORTS.has(effort) && { reasoning_effort: ['xhigh', 'max'].includes(effort) ? 'high' : effort }),
+    ...(format && openai && { response_format: { type: 'json_object' } }),
+  };
+  const t0 = Date.now();
+  let r;
+  try {
+    r = await fetch(base + '/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(key && { authorization: `Bearer ${key}` }) },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300000),
+    });
+  } catch (e) {
+    throw new Error(conn.provider === 'ollama' ? `Couldn't reach Ollama at ${base}. Is it running?` : `Couldn't reach ${p.name} (${base}): ${e.message}`);
+  }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j.error?.message || j.message || `HTTP ${r.status}`;
+    if (r.status === 401) throw coded(`${p.name} rejected the API key (${key ? keyHint(key) : 'none'}). Connect again under ⚙.`, 'bad_key');
+    if (r.status === 402 || j.error?.code === 'insufficient_quota' || /insufficient.*(quota|credit|balance)/i.test(msg)) {
+      throw coded(`Your ${p.name} account is out of credit. Add some on the provider's billing page, then try again.`, 'no_credit');
+    }
+    throw new Error(`${p.name}: ${msg}`);
+  }
+  const choice = j.choices?.[0];
+  const u = j.usage || {};
+  const input = u.prompt_tokens || 0, output = u.completion_tokens || 0;
+  const cacheRead = u.prompt_tokens_details?.cached_tokens || 0;
+  const pin = p.free ? 0 : Number.isFinite(conn.priceIn) ? conn.priceIn : null;
+  const pout = p.free ? 0 : Number.isFinite(conn.priceOut) ? conn.priceOut : null;
+  // cached input is billed at a provider-specific discount; counted at full price here (a slight overestimate)
+  const cost = pin == null || pout == null ? null : (input * pin + output * pout) / 1e6;
+  const usage = { input, output, cost, model, cacheRead, cacheWrite: 0 };
+  recordUsage?.({
+    at: new Date().toISOString(), kind, model, provider: conn.provider, effort: reasoning ? effort ?? null : null,
+    input, cacheRead, cacheWrite: 0, output, cost, ms: Date.now() - t0,
+  });
+  const text = choice?.message?.content ?? '';
+  return { text: format ? stripFences(text) : text, truncated: choice?.finish_reason === 'length', usage };
+}
+
 // `content` is a single user message, or a full messages array for a conversation.
 // `format` is a JSON schema the reply must follow (structured output).
 // `kind` names the feature for the usage history (generate, fix, analysis, gear).
 async function ask(apiKey, system, content, maxTokens, { model, effort, format, kind = 'other' } = {}) {
+  // apiKey is an Anthropic key string (or nothing, for .env's), or { provider, key, baseURL, priceIn, priceOut }
+  if (apiKey && typeof apiKey === 'object') {
+    if (apiKey.provider !== 'anthropic') return askOpenAI(apiKey, system, content, maxTokens, { model, effort, format, kind });
+    apiKey = apiKey.key;
+  }
   model = pickModel(model);
   const key = apiKey || envKey();
   if (!key) throw coded('No API key yet: connect your Anthropic account under ⚙', 'no_key');
@@ -749,7 +861,13 @@ export async function start({
   };
   // The key for a Claude call: the page keeps it (in localStorage) and sends it with each request; without
   // one, ask() falls back to .env.
-  const keyFor = (req) => req.headers['x-api-key'] || undefined;
+  // For a provider other than Claude the page also sends x-provider (and x-base-url, x-price-in/out).
+  const keyFor = (req) => {
+    const provider = req.headers['x-provider'];
+    if (!provider || provider === 'anthropic') return req.headers['x-api-key'] || undefined;
+    return { provider, key: req.headers['x-api-key'] || undefined, baseURL: req.headers['x-base-url'] || undefined,
+      priceIn: parseFloat(req.headers['x-price-in']), priceOut: parseFloat(req.headers['x-price-out']) };
+  };
   const json = (res, code, obj) => {
     res.writeHead(code, { 'content-type': 'application/json' });
     res.end(JSON.stringify(obj));
@@ -782,13 +900,14 @@ export async function start({
       if (req.method === 'POST' && req.url === '/gear') {
         return json(res, 200, await gear(keyFor(req), await readBody(req)));
       }
-      if (req.method === 'GET' && req.url === '/key') { // whether .env has a key, for the ⚙ and Connect screens
-        return json(res, 200, { env: !!envKey() });
+      if (req.method === 'GET' && req.url === '/key') { // which providers have a key in .env, and the provider table, for ⚙ and Connect
+        return json(res, 200, { env: !!envKey(), envs: Object.fromEntries(Object.keys(ENV_KEYS).map((p) => [p, !!envKey(p)])), providers: PROVIDERS });
       }
-      if (req.method === 'POST' && req.url === '/key') { // { key }: checks a key before the page keeps it
-        const { key } = await readBody(req);
-        const result = await checkKey(key);
-        return json(res, 200, { ...result, hint: result.ok ? keyHint(key.trim()) : null });
+      if (req.method === 'POST' && req.url === '/key') { // { key, provider?, baseURL? }: checks a key before the page keeps it
+        const { key, provider, baseURL } = await readBody(req);
+        const conn = provider && provider !== 'anthropic' ? { provider, baseURL } : undefined;
+        const result = await checkKey(key, conn);
+        return json(res, 200, { ...result, hint: result.ok && typeof key === 'string' && key.trim() ? keyHint(key.trim()) : null });
       }
       if (req.method === 'GET' && req.url === '/usage') { // the 🧾 usage history
         let text = '';

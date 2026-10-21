@@ -230,6 +230,7 @@
   #connect { width:min(520px,92vw); font:15px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
   #connect h2 { margin:4px 0 6px; font-size:20px; }
   #connect .lead { color:#bbb; margin:0 0 6px; }
+  #connect .provider { display:block; margin:8px 0; font-size:13px; color:#bbb; } #connect select, #connect input { width:100%; box-sizing:border-box; margin-top:6px; }
   #connect .steps { padding-left:1.3em; margin:10px 0 16px; } #connect .steps li { margin:0 0 14px; }
   #connect .steps div { margin-top:6px; }
   #connect .btn { display:inline-block; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:4px 10px; text-decoration:none; font-size:13px; }
@@ -415,23 +416,28 @@
   </dialog>
   <dialog id="connect">
     <form method="dialog">
-      <h2>Connect to Claude</h2>
-      <p class="lead">AnInstrument uses your own Anthropic API key, so you only pay Anthropic for what you use: usually a cent or two per request, and every request shows its cost.</p>
+      <h2 id="connectTitle">Connect to Claude</h2>
+      <label class="provider">Model provider<br><select id="provider"></select></label>
+      <p class="lead" id="connectLead"></p>
       <ol class="steps">
-        <li><b>Create a key.</b> Sign in to the Claude Console (or sign up), click <i>Create Key</i>, and copy it.
+        <li id="stepCreate"><b>Create a key.</b> <span id="createText">Sign in to the Claude Console (or sign up), click <i>Create Key</i>, and copy it.</span>
           <div><a class="btn" id="consoleKeys" target="_blank" rel="noopener">Open the Claude Console ↗</a></div></li>
-        <li><b>Paste it here.</b> It's checked straight away, then kept in <span class="where">this browser</span> only.
+        <li><b id="pasteTitle">Paste it here.</b> <span id="pasteText">It's checked straight away, then kept in <span class="where">this browser</span> only.</span>
+          <input id="connectBase" placeholder="Base URL, e.g. https://api.example.com/v1" autocomplete="off" spellcheck="false" hidden>
           <input id="connectKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
           <div id="connectMsg" class="hint"></div></li>
+        <li id="stepModel" hidden><b>Choose a model.</b> The list comes from the provider once the key is checked; you can also type a name.
+          <input id="connectModel" list="modelList" placeholder="model name" autocomplete="off" spellcheck="false"></li>
         <li class="credit"><b>Add credit</b> if the account is new: the API is prepaid, and $5 goes a long way.
           <div><a class="btn" id="consoleBilling" target="_blank" rel="noopener">Billing ↗</a></div></li>
       </ol>
+      <datalist id="modelList"></datalist>
       <div class="row"><button value="done" class="go" id="connectDone" disabled>Done</button><button value="later">Later</button></div>
     </form>
   </dialog>
   <dialog id="settings">
     <form method="dialog">
-      <div class="keyRow"><span><b>Claude</b> <span id="keyState"></span></span>
+      <div class="keyRow"><span><b id="provName">Claude</b> <span id="keyState"></span></span>
         <button type="button" id="keyChange">Connect…</button><button type="button" id="keyRemove" hidden>Remove</button></div>
       <p class="hint" id="keyWhere"></p>
       <div class="row speed">
@@ -442,7 +448,8 @@
             <option value="high">high · most thorough</option>
           </select>
         </label>
-        <label>Model<br>
+        <label id="modelOther" hidden>Model<br><input id="modelText" list="modelList" autocomplete="off" spellcheck="false"></label>
+        <label id="modelClaude">Model<br>
           <select id="model">
             <option value="">default (.env MODEL or Sonnet 5.5)</option>
             <option value="claude-haiku-5-5">Haiku 5.5 · fastest, cheapest</option>
@@ -451,7 +458,12 @@
           </select>
         </label>
       </div>
-      <p class="hint">Lower effort means less thinking before writing, so replies come back sooner. Error explanations always use low effort.</p>
+      <div class="row speed" id="priceRow" hidden>
+        <label>Price in $/M tokens<br><input id="priceIn" inputmode="decimal" placeholder="optional" size="8"></label>
+        <label>Price out $/M tokens<br><input id="priceOut" inputmode="decimal" placeholder="optional" size="8"></label>
+      </div>
+      <p class="hint" id="priceHint" hidden>Prices are on the provider's pricing page. Without them each request's cost shows as unknown (the tokens are still counted).</p>
+      <p class="hint">Lower effort means less thinking before writing, so replies come back sooner. Error explanations always use low effort. Effort applies to Claude and to OpenAI's reasoning models; other models ignore it.</p>
       <div class="row"><button value="save" class="go">Save</button><button value="cancel">Cancel</button></div>
     </form>
   </dialog>
@@ -544,17 +556,29 @@ const status = (t) => {
 };
 // The page runs in the desktop app or in a browser (npm start); say where things are saved.
 if (/Electron/.test(navigator.userAgent)) document.querySelectorAll('.where').forEach((e) => (e.textContent = 'this app'));
-const store = {
-  get: () => { try { return localStorage.getItem('anthropic-key') || ''; } catch { return ''; } },
-  set: (v) => { try { v ? localStorage.setItem('anthropic-key', v) : localStorage.removeItem('anthropic-key'); } catch {} },
-};
-// Speed settings from ⚙, sent with Claude requests. Effort defaults to low: quick sketches suit live play.
+// The provider (Claude, OpenAI, Llama API, Ollama, other), its key and its model; each provider keeps its own.
 const pref = (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } };
 const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
-const speed = () => ({ effort: pref('effort', 'low'), model: pref('model', '') || undefined });
+const provider = () => pref('provider', 'anthropic');
+const keySlot = (p) => (p === 'anthropic' ? 'anthropic-key' : 'key:' + p); // Claude's slot predates providers
+const store = {
+  get: (p = provider()) => { try { return localStorage.getItem(keySlot(p)) || ''; } catch { return ''; } },
+  set: (v, p = provider()) => { try { v ? localStorage.setItem(keySlot(p), v) : localStorage.removeItem(keySlot(p)); } catch {} },
+};
+const modelSlot = (p = provider()) => (p === 'anthropic' ? 'model' : 'model:' + p);
+const modelList = (p = provider()) => { try { return JSON.parse(pref('models:' + p, '[]')); } catch { return []; } };
+// Speed settings from ⚙, sent with Claude requests. Effort defaults to low: quick sketches suit live play.
+const speed = () => ({ effort: pref('effort', 'low'), model: pref(modelSlot(), '') || undefined });
 const post = async (path, body) => {
   const headers = { 'content-type':'application/json' };
+  const p = provider();
   if (store.get()) headers['x-api-key'] = store.get();
+  if (p !== 'anthropic') {
+    headers['x-provider'] = p;
+    const base = pref('base:' + p, ''), [pin, pout] = pref('price:' + p, ',').split(',');
+    if (base) headers['x-base-url'] = base;
+    if (pin !== '' && pout !== '') { headers['x-price-in'] = pin; headers['x-price-out'] = pout; }
+  }
   const r = await fetch(path, { method:'POST', headers, body:JSON.stringify(body) });
   const j = await r.json();
   if (!r.ok) throw Object.assign(new Error(j.error), { code: j.code });
@@ -738,36 +762,86 @@ const stop = guard(async () => { midiAllOff(); await post('/stop', {}); status('
 
 $('cog').onclick = () => {
   renderKey();
-  $('effort').value = pref('effort', 'low'); $('model').value = pref('model', '');
+  $('effort').value = pref('effort', 'low');
+  const p = provider(), claude = p === 'anthropic';
+  $('model').value = pref('model', '');
+  $('modelText').value = pref(modelSlot(), '');
+  $('modelClaude').hidden = !claude; $('modelOther').hidden = claude;
+  fillModels();
+  const paid = !claude && !(providers[p] || {}).free;
+  $('priceRow').hidden = $('priceHint').hidden = !paid;
+  [$('priceIn').value, $('priceOut').value] = pref('price:' + p, ',').split(',');
   $('settings').returnValue = ''; // Esc or a click outside closes without saving or clearing
   $('settings').showModal();
 };
 $('settings').addEventListener('close', () => {
   const v = $('settings').returnValue;
-  if (v === 'save') { setPref('effort', $('effort').value); setPref('model', $('model').value); }
+  if (v !== 'save') return;
+  const p = provider();
+  setPref('effort', $('effort').value);
+  if (p === 'anthropic') setPref('model', $('model').value);
+  else {
+    setPref(modelSlot(), $('modelText').value.trim());
+    const [pin, pout] = [$('priceIn').value.trim(), $('priceOut').value.trim()];
+    setPref('price:' + p, Number.isFinite(parseFloat(pin)) && Number.isFinite(parseFloat(pout)) ? `${parseFloat(pin)},${parseFloat(pout)}` : ',');
+  }
 });
+function fillModels() { // the provider's own list, from when its key was checked
+  $('modelList').replaceChildren(...modelList().map((m) => Object.assign(document.createElement('option'), { value: m })));
+}
 
-// --- connecting to Claude: the API key --------------------------------------------------------------
+// --- connecting to a provider: the API key ----------------------------------------------------------
 // The page keeps the key in localStorage (this app or browser only) and sends it to the local server with
-// each request. POST /key checks a key before it's kept. ANTHROPIC_API_KEY in .env works as a fallback.
-const CONSOLE = 'https://platform.claude.com'; // the Claude Console (console.anthropic.com redirects here)
-$('consoleKeys').href = CONSOLE + '/settings/keys';
-$('consoleBilling').href = CONSOLE + '/settings/billing';
-let key = { env: false };
-const hasKey = () => !!store.get() || key.env;
-async function loadKey() { try { key = await (await fetch('/key')).json(); } catch {} }
+// each request. POST /key checks a key before it's kept. ANTHROPIC_API_KEY / OPENAI_API_KEY / LLAMA_API_KEY
+// in .env work as a fallback. The server's /key also returns the provider table.
+let key = { env: false, envs: {} }, providers = { anthropic: { name: 'Claude (Anthropic)' } };
+const hasKey = () => !!store.get() || !!(key.envs || {})[provider()] || !!(providers[provider()] || {}).noKey;
+async function loadKey() {
+  try {
+    key = await (await fetch('/key')).json(); providers = key.providers || providers;
+    $('provider').replaceChildren(...Object.entries(providers).map(([id, p]) => Object.assign(document.createElement('option'), { value: id, textContent: p.name })));
+  } catch {}
+}
+const shortName = (p = provider()) => (providers[p]?.name || p).replace(/ \(.*\)/, '');
 function renderKey() {
-  const local = store.get(), saved = !!local;
+  const p = provider(), info = providers[p] || {}, local = store.get(), saved = !!local;
   const hint = local ? `${local.slice(0, 7)}…${local.slice(-4)}` : null;
-  $('keyState').className = saved || key.env ? 'ok' : 'none';
-  $('keyState').textContent = saved ? `connected · ${hint}` : key.env ? 'connected · key from .env' : 'not connected';
-  $('keyChange').textContent = saved ? 'Change key…' : 'Connect…';
+  const envHas = !!(key.envs || {})[p];
+  $('provName').textContent = shortName() + (pref(modelSlot(), '') && p !== 'anthropic' ? ' · ' + pref(modelSlot(), '') : '');
+  $('keyState').className = saved || envHas || info.noKey ? 'ok' : 'none';
+  $('keyState').textContent = saved ? `connected · ${hint}` : envHas ? 'connected · key from .env' : info.noKey ? 'no key needed' : 'not connected';
+  $('keyChange').textContent = saved ? 'Change…' : 'Connect…';
   $('keyRemove').hidden = !saved;
   $('keyWhere').textContent = saved ? `The key is kept in ${/Electron/.test(navigator.userAgent) ? 'this app' : 'this browser'} only, and sent to its local server with each request.`
-    : key.env ? 'Using ANTHROPIC_API_KEY from .env. Connect a key here to use that instead.' : 'Connect to use Claude.';
+    : envHas ? `Using the key from .env. Connect a key here to use that instead.` : info.noKey ? '' : 'Connect to use ' + shortName() + '.';
+}
+// Wording and links for the provider shown in Connect
+function renderConnect() {
+  const p = $('provider').value, info = providers[p] || {}, claude = p === 'anthropic';
+  $('connectTitle').textContent = 'Connect to ' + shortName(p);
+  $('connectLead').textContent = claude
+    ? 'AnInstrument uses your own Anthropic API key, so you only pay Anthropic for what you use: usually a cent or two per request, and every request shows its cost.'
+    : info.free ? 'Runs a model on this Mac with Ollama: free and offline, but quality depends on the model, and the sound code Claude writes best is the benchmark.'
+    : `AnInstrument uses your own ${shortName(p)} key. Your prompts and code are sent to that provider, not to Anthropic. The prompts were written for Claude: other models may need a retry more often.`;
+  $('stepCreate').hidden = !!info.noKey || p === 'custom';
+  $('createText').textContent = claude ? 'Sign in to the Claude Console (or sign up), click Create Key, and copy it.' : `Sign in to ${shortName(p)}, create an API key, and copy it.`;
+  $('consoleKeys').textContent = claude ? 'Open the Claude Console ↗' : `Open ${shortName(p)} ↗`;
+  $('consoleKeys').href = info.keyUrl || '#';
+  $('consoleBilling').href = info.billingUrl || '#';
+  $('connectBase').hidden = p !== 'custom';
+  $('connectBase').value = pref('base:' + p, '');
+  $('connectKey').hidden = !!info.noKey;
+  $('connectKey').placeholder = claude ? 'sk-ant-…' : 'API key';
+  $('pasteTitle').textContent = info.noKey ? 'Check that it is running.' : 'Paste it here.';
+  $('stepModel').hidden = claude;
+  $('connectModel').value = pref(modelSlot(p), '');
+  $('modelList').replaceChildren(...modelList(p).map((m) => Object.assign(document.createElement('option'), { value: m })));
+  $('connect').querySelector('.credit').hidden = !claude && !info.billingUrl;
 }
 // why: welcome (first run), no_key, bad_key or no_credit (the credit step is highlighted)
 function openConnect(why = 'welcome') {
+  $('provider').value = provider();
+  renderConnect();
   $('connectKey').value = '';
   const msg = { bad_key: ['err', 'The saved key stopped working (deleted or mistyped?). Paste a new one.'],
     no_credit: ['err', 'The key works, but the account is out of credit: add some under Billing.'] }[why] || ['', ''];
@@ -776,31 +850,58 @@ function openConnect(why = 'welcome') {
   $('connectDone').disabled = why !== 'no_credit';
   if ($('settings').open) $('settings').close();
   if (!$('connect').open) $('connect').showModal();
-  if (why !== 'no_credit') $('connectKey').focus();
+  if (why !== 'no_credit') ($('connectKey').hidden ? $('connectDone') : $('connectKey')).focus();
+  if (why === 'welcome') checkConnected();
+}
+// Done needs a working key and, outside Claude, a model
+function updateDone() {
+  const p = $('provider').value, ok = $('connectMsg').classList.contains('ok');
+  $('connectDone').disabled = !(ok && (p === 'anthropic' || $('connectModel').value.trim()));
+}
+// Switching provider in Connect: one that is already connected needs nothing more
+async function checkConnected() {
+  const p = $('provider').value, info = providers[p] || {};
+  if (store.get(p) || info.noKey) { await checkPasted(store.get(p)); }
 }
 let checking = 0;
-async function checkPasted() {
-  const k = $('connectKey').value.trim(), n = ++checking;
+async function checkPasted(saved) {
+  const p = $('provider').value, info = providers[p] || {}, claude = p === 'anthropic';
+  const k = (typeof saved === 'string' ? saved : $('connectKey').value).trim(), n = ++checking;
+  const base = $('connectBase').value.trim();
+  const msg = (cls, t) => { $('connectMsg').className = 'hint ' + cls; $('connectMsg').textContent = t; };
   $('connectDone').disabled = true;
-  if (!k) { $('connectMsg').className = 'hint'; $('connectMsg').textContent = ''; return; }
-  if (!k.startsWith('sk-ant-') || k.length < 30) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = 'Anthropic API keys start with sk-ant-. Copy the whole key.'; return; }
-  $('connectMsg').className = 'hint'; $('connectMsg').textContent = 'Checking the key…';
+  if (!k && !info.noKey) return msg('', '');
+  if (claude && (!k.startsWith('sk-ant-') || k.length < 30)) return msg('err', 'Anthropic API keys start with sk-ant-. Copy the whole key.');
+  if (p === 'custom' && !base) return msg('err', 'Enter the base URL first.');
+  msg('', info.noKey ? 'Checking…' : 'Checking the key…');
   try {
-    const r = await post('/key', { key: k });
+    const r = await post('/key', { key: k, provider: p, baseURL: p === 'custom' ? base : undefined });
     if (n !== checking) return; // a newer paste is being checked
-    if (!r.ok) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = r.error; return; }
-    store.set(k);
-    $('connectMsg').className = 'hint ok';
-    $('connectMsg').textContent = `✓ Connected (${r.hint}).`;
-    $('connectDone').disabled = false; $('connectDone').focus();
+    if (!r.ok) return msg('err', r.error);
+    store.set(k, p); setPref('provider', p);
+    if (p === 'custom') setPref('base:' + p, base);
+    if (r.models) { setPref('models:' + p, JSON.stringify(r.models)); renderConnect(); }
+    msg('ok', `✓ Connected${r.hint ? ` (${r.hint})` : ''}.`);
+    updateDone();
+    if (!$('connectDone').disabled) $('connectDone').focus(); else $('connectModel').focus();
     status('');
-  } catch (e) { if (n === checking) { $('connectMsg').className = 'hint err'; $('connectMsg').textContent = e.message; } }
+  } catch (e) { if (n === checking) msg('err', e.message); }
 }
 let pasteTimer;
 $('connectKey').addEventListener('input', () => { clearTimeout(pasteTimer); pasteTimer = setTimeout(checkPasted, 400); });
+$('connectBase').addEventListener('input', () => { clearTimeout(pasteTimer); pasteTimer = setTimeout(() => { if ($('connectKey').value.trim() || (providers.custom || {}).noKey) checkPasted(); }, 600); });
+$('connectModel').addEventListener('input', () => { setPref(modelSlot($('provider').value), $('connectModel').value.trim()); updateDone(); });
+$('provider').addEventListener('change', () => {
+  const p = $('provider').value;
+  renderConnect(); $('connectKey').value = '';
+  $('connectMsg').className = 'hint'; $('connectMsg').textContent = ''; $('connectDone').disabled = true;
+  // The provider is switched when its key is accepted (checkPasted), so a cancelled change leaves things as they were
+  if (store.get(p) || (providers[p] || {}).noKey) checkPasted(store.get(p));
+  else if (!$('connectKey').hidden) $('connectKey').focus();
+});
 $('keyChange').onclick = () => openConnect();
 $('keyRemove').onclick = async () => {
-  if (!confirm('Disconnect? The key is removed from this app (it still exists in the Claude Console).')) return;
+  if (!confirm(`Disconnect? The key is removed from this app (it still exists with ${shortName()}).`)) return;
   store.set('');
   renderKey(); status('no key set');
 };

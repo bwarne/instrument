@@ -148,6 +148,33 @@ app.whenReady().then(async () => {
     const opened = await run(`window.__opened`);
     check(opened[0] === 'https://share.example.invalid/s/abcdefghijkm', 'Open hands the link to the browser');
 
+    // other providers: pick OpenAI in Connect, paste a key, choose a model, and requests carry them
+    await run(`localStorage.clear(); loadKey().then(() => { openConnect(); })`);
+    await settle();
+    const opts = await run(`[...$('provider').options].map((o) => o.value).join(',')`);
+    check(opts === 'anthropic,openai,ollama,custom', 'Connect lists the providers', opts);
+    await run(`$('provider').value = 'openai'; $('provider').dispatchEvent(new Event('change'));
+      $('connectKey').value = 'sk-test-1234567890abcdef'; checkPasted();`);
+    await settle();
+    const oa = await run(`({ title: $('connectTitle').textContent, model: !$('stepModel').hidden, done: $('connectDone').disabled,
+      list: $('modelList').children.length, provider: localStorage.getItem('provider') })`);
+    check(oa.title === 'Connect to OpenAI' && oa.model, 'OpenAI asks for a model', JSON.stringify(oa));
+    check(oa.done === true && oa.list === 2 && oa.provider === 'openai', 'Done waits for a model; the key check filled the list', JSON.stringify(oa));
+    await run(`$('connectModel').value = 'gpt-test'; $('connectModel').dispatchEvent(new Event('input'));`);
+    check(await run(`!$('connectDone').disabled`), 'a model enables Done');
+    await run(`window.__calls.length = 0; post('/generate', { prompt: 'x', ...speed() })`);
+    const gen = await run(`window.__calls.find((c) => c.path === '/generate')`);
+    check(gen.headers['x-provider'] === 'openai' && gen.headers['x-api-key'] === 'sk-test-1234567890abcdef', 'requests carry the provider and its key', JSON.stringify(gen.headers));
+    check(gen.body.model === 'gpt-test', 'and its model', JSON.stringify(gen.body));
+    await run(`$('provider').value = 'ollama'; $('provider').dispatchEvent(new Event('change'));`);
+    await settle();
+    const ol = await run(`({ key: $('connectKey').hidden, provider: localStorage.getItem('provider') })`);
+    check(ol.key && ol.provider === 'ollama', 'Ollama needs no key and is checked at once', JSON.stringify(ol));
+    await run(`setPref('provider', 'anthropic'); $('connect').close()`);
+    await run(`window.__calls.length = 0; post('/generate', { prompt: 'x' })`);
+    const claude = await run(`window.__calls.find((c) => c.path === '/generate')`);
+    check(!claude.headers['x-provider'], 'Claude requests carry no provider header');
+
     check(problems.length === 0, 'no console errors during any of that', problems.join(' | '));
   } catch (e) {
     check(false, 'harness ran without throwing', e.message);

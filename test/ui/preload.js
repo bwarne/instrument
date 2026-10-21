@@ -2,7 +2,15 @@
 // no sclang, no network. contextIsolation is off so these land on the page's own window.
 const routes = {
   '/status': { supercollider: true, paths: ['/Applications/SuperCollider.app/Contents/MacOS/sclang'] },
-  '/key': { env: true },
+  '/key': {
+    env: true, envs: { anthropic: true },
+    providers: {
+      anthropic: { name: 'Claude (Anthropic)', keyUrl: 'https://platform.claude.com/settings/keys', billingUrl: 'https://platform.claude.com/settings/billing' },
+      openai: { name: 'OpenAI', baseURL: 'https://api.openai.com/v1', keyUrl: 'https://platform.openai.com/api-keys' },
+      ollama: { name: 'Ollama (local, free)', baseURL: 'http://localhost:11434/v1', noKey: true, free: true },
+      custom: { name: 'Other (OpenAI-compatible)', baseURL: '' },
+    },
+  },
   '/usage': { entries: [], file: '/tmp/usage.jsonl' },
   '/share': {
     id: 'abcdefghijkm',
@@ -16,9 +24,9 @@ const routes = {
 window.__calls = [];
 window.fetch = async (url, opts = {}) => {
   const path = String(url).replace(/^https?:\/\/[^/]+/, '');
-  window.__calls.push({ path, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
+  window.__calls.push({ path, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null, headers: opts.headers || {} });
   if (path === '/share' && window.__hold) await window.__hold; // a test can keep the upload pending
-  const body = routes[path] ?? { ok: true };
+  const body = path === '/key' && opts.method === 'POST' ? { ok: true, hint: 'sk-test…cdef', models: ['gpt-test', 'gpt-test-mini'] } : routes[path] ?? { ok: true };
   return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
 };
 

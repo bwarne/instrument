@@ -62,6 +62,10 @@ by GitHub Pages; `docs/og.png` is the preview image.
 - Node 22+
 - An Anthropic API key from the [Claude Console](https://platform.claude.com/settings/keys) (the app walks you
   through it). Claude subscriptions (Pro/Max) can't be used: Anthropic only allows those in its own apps.
+- Or another provider: **OpenAI**, **Meta's Llama API**, **Ollama** (Llama and others running on your Mac, free
+  and offline) or any **OpenAI-compatible** endpoint (Together, Groq, OpenRouter, …). Pick it under ⚙ → Connect.
+  The prompts are written for Claude, and the OpenAI-compatible path has been tested against a stand-in server
+  only: expect weaker sound code from smaller models, and more use of Fix.
 
 ## Run
 
@@ -109,8 +113,8 @@ window quits it and shuts down sclang and scsynth.
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | Fallback key if none is set in the ⚙ dialog |
-| `MODEL` | Claude model (default `claude-sonnet-5-5`) |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `LLAMA_API_KEY` | Fallback key for that provider if none is set in the ⚙ dialog |
+| `MODEL` | Claude model (default `claude-sonnet-5-5`); other providers' models are chosen in ⚙ |
 | `PRICE_IN`, `PRICE_OUT` | $ per million tokens, for models not in the built-in price table |
 | `MIDI_PORT` | Part of a MIDI destination's name; also send `~midi` to that device |
 | `SCLANG`, `PORT` | Path to `sclang`, HTTP port (default 3000) |
@@ -129,10 +133,10 @@ so `s.sync` works anywhere. `scope.scd`, `midi.scd`, `parts.scd` and `record.scd
 startup. Recordings go to the server's temp folder as WAV; MP3s are encoded from them in Node (lamejs) on request. The desktop app
 (`electron/main.js`) starts the same server on port 47800 and shows the page in its own window.
 
-⤴ Share is the one thing that publishes your code or recordings (Claude requests go to Anthropic, and
+⤴ Share is the one thing that publishes your code or recordings (model requests go to the provider you chose, Anthropic by default, and
 installed copies check GitHub Releases for updates). `server.js` posts the code and the take's MP3 to the
 Cloudflare Worker in [`share/`](share/), which stores them in R2 and serves the link; nothing is uploaded
-until you press Share in the dialog. The Anthropic key is never sent there.
+until you press Share in the dialog. API keys are never sent there.
 
 The server runs whatever sclang code it is sent, and sclang can run shell commands, so it only accepts
 JSON POSTs from its own page: it listens on `127.0.0.1` and rejects requests whose `Host` or `Origin`
